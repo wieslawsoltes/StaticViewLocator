@@ -1,0 +1,22 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StaticViewLocator", "StaticViewLocator\StaticViewLocator.csproj", "{44612354-2231-41AA-805A-C9EEF6DB4CF9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StaticViewLocatorDemo", "StaticViewLocatorDemo\StaticViewLocatorDemo.csproj", "{92F9405F-926D-45E7-973C-3370D0F49348}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{44612354-2231-41AA-805A-C9EEF6DB4CF9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44612354-2231-41AA-805A-C9EEF6DB4CF9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44612354-2231-41AA-805A-C9EEF6DB4CF9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44612354-2231-41AA-805A-C9EEF6DB4CF9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{92F9405F-926D-45E7-973C-3370D0F49348}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{92F9405F-926D-45E7-973C-3370D0F49348}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{92F9405F-926D-45E7-973C-3370D0F49348}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{92F9405F-926D-45E7-973C-3370D0F49348}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
