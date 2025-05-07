@@ -47,6 +47,19 @@ public partial class ViewLocator : IDataTemplate
 }
 ```
 
+Source generator will generate the `s_views` dictionary similar to below code using convention based on `ViewModel` suffix for view models subsituted to `View` suffix.
+
+```csharp
+public partial class ViewLocator
+{
+	private static Dictionary<Type, Func<Control>> s_views = new()
+	{
+		[typeof(StaticViewLocatorDemo.ViewModels.MainWindowViewModel)] = () => new TextBlock() { Text = "Not Found: StaticViewLocatorDemo.Views.MainWindowView" },
+		[typeof(StaticViewLocatorDemo.ViewModels.TestViewModel)] = () => new StaticViewLocatorDemo.Views.TestView(),
+	};
+}
+```
+
 ## License
 
 StaticViewLocator is licensed under the MIT license. See [LICENSE](LICENSE.TXT) file for details.
