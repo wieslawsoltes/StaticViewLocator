@@ -3,16 +3,28 @@
         xmlns:vm="using:StaticViewLocatorDemo.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="560"
         x:Class="StaticViewLocatorDemo.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
-        Title="StaticViewLocatorDemo">
+        Title="Static View Locator Demo">
 
   <Design.DataContext>
     <vm:MainWindowViewModel />
   </Design.DataContext>
 
-  <ContentControl Content="{Binding TestViewModel}" />
-  
+  <TabControl ItemsSource="{Binding Pages}"
+              SelectedItem="{Binding SelectedPage}">
+    <TabControl.ItemTemplate>
+      <DataTemplate x:DataType="vm:ViewModelBase">
+        <TextBlock Text="{Binding Title}" Margin="12,4"/>
+      </DataTemplate>
+    </TabControl.ItemTemplate>
+    <TabControl.ContentTemplate>
+      <DataTemplate x:DataType="vm:ViewModelBase">
+        <ContentControl Content="{Binding .}"/>
+      </DataTemplate>
+    </TabControl.ContentTemplate>
+  </TabControl>
+
 </Window>

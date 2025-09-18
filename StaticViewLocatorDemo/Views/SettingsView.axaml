@@ -1,0 +1,15 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:StaticViewLocatorDemo.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="StaticViewLocatorDemo.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+  <StackPanel Margin="24" Spacing="16">
+    <TextBlock Text="Personalise how the application behaves at runtime." FontSize="18" FontWeight="SemiBold"/>
+    <ToggleSwitch Content="Use dark theme" IsChecked="{Binding UseDarkTheme}"/>
+    <ToggleSwitch Content="Enable subtle animations" IsChecked="{Binding EnableAnimations}"/>
+    <ToggleSwitch Content="Notify me about new releases" IsChecked="{Binding ReceiveReleaseNotifications}"/>
+  </StackPanel>
+</UserControl>
