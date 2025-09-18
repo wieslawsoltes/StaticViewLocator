@@ -3,9 +3,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <Deterministic>true</Deterministic>
-    <LangVersion>13</LangVersion>
     <ImplicitUsings>false</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <!-- Generator specific settings -->
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
@@ -15,15 +13,8 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <VersionPrefix>0.0.1</VersionPrefix>
-    <VersionSuffix></VersionSuffix>
-    <Authors>Wiesław Šoltés</Authors>
-    <Company>Wiesław Šoltés</Company>
     <Description>A C# source generator that automatically implements static view locator for Avalonia without using reflection.</Description>
-    <Copyright>Copyright © Wiesław Šoltés 2025</Copyright>
-    <PackageProjectUrl>https://github.com/wieslawsoltes/StaticViewLocator</PackageProjectUrl>
     <PackageId>StaticViewLocator</PackageId>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>ViewLocator;static;avalonia;generator</PackageTags>
   </PropertyGroup>
 
