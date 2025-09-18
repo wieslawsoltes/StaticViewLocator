@@ -10,7 +10,6 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)\GeneratedFiles</CompilerGeneratedFilesOutputPath>
     <IsPackable>false</IsPackable>
-    <AvaloniaVersion>11.2.5</AvaloniaVersion>
   </PropertyGroup>
 
   <ItemGroup>
