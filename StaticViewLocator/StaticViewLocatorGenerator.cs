@@ -43,7 +43,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 static (generatorContext, cancellationToken) =>
                 {
                     var classDeclaration = (ClassDeclarationSyntax)generatorContext.Node;
-                    if (generatorContext.SemanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol symbol)
+                    if (generatorContext.SemanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not { } symbol)
                     {
                         return null;
                     }
