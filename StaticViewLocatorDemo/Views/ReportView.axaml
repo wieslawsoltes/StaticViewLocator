@@ -1,0 +1,19 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:StaticViewLocatorDemo.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="160"
+             x:Class="StaticViewLocatorDemo.Views.ReportView"
+             x:DataType="vm:ReportViewModel">
+  <Border Padding="16" CornerRadius="10" Background="{DynamicResource ThemeBackgroundBrush}">
+    <StackPanel Spacing="6">
+      <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold"/>
+      <TextBlock Text="{Binding Summary}" TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding LastGenerated, StringFormat='Last generated: {0:G}'}" FontStyle="Italic"/>
+      <Border Background="{DynamicResource ThemeAccentBrush}" Padding="6" CornerRadius="6" HorizontalAlignment="Left">
+        <TextBlock Text="{Binding Status}" Foreground="White"/>
+      </Border>
+    </StackPanel>
+  </Border>
+</UserControl>
