@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Testing;
 using Microsoft.CodeAnalysis.Testing;
-using Microsoft.CodeAnalysis.Testing.Verifiers;
 using Microsoft.CodeAnalysis.Text;
 using StaticViewLocator;
 using PackageIdentity = Microsoft.CodeAnalysis.Testing.PackageIdentity;
@@ -15,7 +14,7 @@ internal static class StaticViewLocatorGeneratorVerifier
 {
     private static readonly ReferenceAssemblies s_referenceAssemblies = ReferenceAssemblies.Net.Net80.AddPackages(
         ImmutableArray.Create(
-            new PackageIdentity("Avalonia", "11.2.5")));
+            new PackageIdentity("Avalonia", "11.3.6")));
 
     public static async Task VerifyGeneratedSourcesAsync(string source, params (string hintName, string source)[] generatedSources)
     {
@@ -30,7 +29,7 @@ internal static class StaticViewLocatorGeneratorVerifier
         await test.RunAsync();
     }
 
-    private sealed class Test : CSharpSourceGeneratorTest<StaticViewLocatorGenerator, XUnitVerifier>
+    private sealed class Test : CSharpSourceGeneratorTest<StaticViewLocatorGenerator, DefaultVerifier>
     {
         public Test()
         {
