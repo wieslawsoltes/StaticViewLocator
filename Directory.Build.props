@@ -1,8 +1,20 @@
 <Project>
+
   <PropertyGroup>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>preview</LangVersion>
+    <LangVersion>13</LangVersion>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix></VersionSuffix>
+    <Authors>Wiesław Šoltés</Authors>
+    <Company>Wiesław Šoltés</Company>
+    <Copyright>Copyright © Wiesław Šoltés 2025</Copyright>
+    <PackageProjectUrl>https://github.com/wieslawsoltes/StaticViewLocator</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+   </PropertyGroup>
+
 </Project>
