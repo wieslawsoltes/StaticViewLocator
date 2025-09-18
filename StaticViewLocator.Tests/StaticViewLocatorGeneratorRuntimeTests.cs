@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -10,19 +9,13 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.Testing;
 using StaticViewLocator;
 using Xunit;
-using PackageIdentity = Microsoft.CodeAnalysis.Testing.PackageIdentity;
 
 namespace StaticViewLocator.Tests;
 
 public class StaticViewLocatorGeneratorRuntimeTests
 {
-    private static readonly ReferenceAssemblies s_referenceAssemblies = ReferenceAssemblies.Net.Net80.AddPackages(
-        ImmutableArray.Create(
-            new PackageIdentity("Avalonia", "11.2.5")));
-
     [AvaloniaFact]
     public async Task CreatesRegisteredViewInstances()
     {
@@ -93,19 +86,6 @@ namespace TestApp.Views
 
         Assert.Equal("TestApp.Views.SampleView", sampleControl.GetType().FullName);
         Assert.Equal("Avalonia.Controls.TextBlock", missingControl.GetType().FullName);
-    }
-
-    private static async Task<CSharpCompilation> CreateCompilationAsync(string source)
-    {
-        var parseOptions = new CSharpParseOptions();
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
-        var references = await s_referenceAssemblies.ResolveAsync(LanguageNames.CSharp, default);
-
-        return CSharpCompilation.Create(
-            assemblyName: "TestAssembly",
-            syntaxTrees: new[] { syntaxTree },
-            references: references,
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
     }
 
     [AvaloniaFact]
@@ -213,6 +193,58 @@ namespace Portal.Views
         var fallback = Assert.IsType<TextBlock>(settingsControl);
         Assert.Equal("Not Found: Portal.Views.SettingsView", fallback.Text);
         Assert.DoesNotContain(viewsMap.Keys, key => key.FullName?.Contains("WorkspaceViewModel", StringComparison.Ordinal) == true);
+    }
+
+    private static Task<CSharpCompilation> CreateCompilationAsync(string source)
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "RuntimeTestAssembly",
+            syntaxTrees: new[] { syntaxTree },
+            references: ResolveReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        return Task.FromResult(compilation);
+    }
+
+    private static IReadOnlyCollection<MetadataReference> ResolveReferences()
+    {
+        var references = new List<MetadataReference>();
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var trustedPlatformAssemblies = (string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty;
+
+        foreach (var path in trustedPlatformAssemblies.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                continue;
+            }
+
+            if (unique.Add(path))
+            {
+                references.Add(MetadataReference.CreateFromFile(path));
+            }
+        }
+
+        foreach (var assembly in GetAdditionalAssemblies())
+        {
+            if (string.IsNullOrEmpty(assembly.Location) || !unique.Add(assembly.Location))
+            {
+                continue;
+            }
+
+            references.Add(MetadataReference.CreateFromFile(assembly.Location));
+        }
+
+        return references;
+    }
+
+    private static IEnumerable<Assembly> GetAdditionalAssemblies()
+    {
+        yield return typeof(Control).Assembly;
+        yield return typeof(UserControl).Assembly;
+        yield return typeof(StaticViewLocatorGenerator).Assembly;
     }
 
     private static object CreateInstance(Assembly assembly, string typeName)

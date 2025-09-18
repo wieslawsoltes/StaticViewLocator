@@ -6,6 +6,26 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StaticViewLocatorDemo", "St
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StaticViewLocator.Tests", "StaticViewLocator.Tests\StaticViewLocator.Tests.csproj", "{B654A784-6F67-4B9C-A138-0D93766D0CBD}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{735CA9D4-CEC8-4CDD-B742-BFBA7C1E3848}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{8B6941D9-330F-4723-BF86-510CE00FC4CB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{0A89DD8C-1E2B-4004-8B04-B587279E14A4}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "build", "build", "{89940B1E-2172-47A6-8D8E-2BB635C2943E}"
+	ProjectSection(SolutionItems) = preProject
+		Directory.Packages.props = Directory.Packages.props
+		Directory.Build.props = Directory.Build.props
+		global.json = global.json
+		NuGet.Config = NuGet.Config
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{BE18CBD0-66CF-4CE9-975C-C07EA6B25AAA}"
+	ProjectSection(SolutionItems) = preProject
+		LICENSE.TXT = LICENSE.TXT
+		README.md = README.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,5 +75,10 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{44612354-2231-41AA-805A-C9EEF6DB4CF9} = {735CA9D4-CEC8-4CDD-B742-BFBA7C1E3848}
+		{B654A784-6F67-4B9C-A138-0D93766D0CBD} = {8B6941D9-330F-4723-BF86-510CE00FC4CB}
+		{92F9405F-926D-45E7-973C-3370D0F49348} = {0A89DD8C-1E2B-4004-8B04-B587279E14A4}
 	EndGlobalSection
 EndGlobal

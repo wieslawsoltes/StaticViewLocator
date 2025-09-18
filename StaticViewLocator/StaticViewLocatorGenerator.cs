@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -42,7 +43,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 static (generatorContext, cancellationToken) =>
                 {
                     var classDeclaration = (ClassDeclarationSyntax)generatorContext.Node;
-                    if (generatorContext.SemanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not INamedTypeSymbol symbol)
+                    if (generatorContext.SemanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not { } symbol)
                     {
                         return null;
                     }
@@ -84,6 +85,10 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         var namespaceNameLocator = locatorSymbol.ContainingNamespace.ToDisplayString();
+
+        var buildMethodExists = locatorSymbol.GetMembers()
+            .OfType<IMethodSymbol>()
+            .Any(method => method.Name == "Build" && method.Parameters.Length == 1);
 
         var format = new SymbolDisplayFormat(
             typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypes,
@@ -151,6 +156,32 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         source.AppendLine("\t};");
+
+        if (!buildMethodExists)
+        {
+            source.Append(
+                """
+
+	public Control? Build(object? data)
+	{
+		if (data is null)
+		{
+			return null;
+		}
+
+		var type = data.GetType();
+
+		if (s_views.TryGetValue(type, out var func))
+		{
+			return func.Invoke();
+		}
+
+		throw new Exception($"Unable to create view for type: {type}");
+	}
+
+""");
+        }
+
         source.AppendLine("}");
 
         return source.ToString();
