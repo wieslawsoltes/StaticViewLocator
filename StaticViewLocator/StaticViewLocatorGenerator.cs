@@ -136,6 +136,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         source.AppendLine("\t{");
 
         var userControlViewSymbol = compilation.GetTypeByMetadataName("Avalonia.Controls.UserControl");
+        var windowViewSymbol = compilation.GetTypeByMetadataName("Avalonia.Controls.Window");
 
         foreach (var viewModelSymbol in relevantViewModels)
         {
@@ -144,7 +145,8 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             var classNameView = classNameViewModel.Replace(ViewModelSuffix, ViewSuffix);
 
             var viewSymbol = compilation.GetTypeByMetadataName(classNameView);
-            if (viewSymbol is null || viewSymbol.BaseType?.Equals(userControlViewSymbol, SymbolEqualityComparer.Default) != true)
+            if (viewSymbol is null || (!viewSymbol.IsSubclassOf(userControlViewSymbol!)
+                                       && !viewSymbol.IsSubclassOf(windowViewSymbol!)))
             {
                 source.AppendLine(
                     $"\t\t[typeof({classNameViewModel})] = () => new TextBlock() {{ Text = \"Not Found: {classNameView}\" }},");
@@ -185,5 +187,18 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         source.AppendLine("}");
 
         return source.ToString();
+    }
+}
+
+internal static class NamedTypeSymbolExtensions
+{
+    public static bool IsSubclassOf(this INamedTypeSymbol from, INamedTypeSymbol to)
+    {
+        if (from.BaseType != null)
+        {
+            return from.BaseType.Equals(to, SymbolEqualityComparer.Default) || IsSubclassOf(from.BaseType, to);
+        }
+
+        return false;
     }
 }
