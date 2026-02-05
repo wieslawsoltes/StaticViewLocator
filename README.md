@@ -60,6 +60,20 @@ public partial class ViewLocator
 }
 ```
 
+## MSBuild configuration
+
+You can scope which view model namespaces are considered and optionally include internal view models.
+
+```xml
+<PropertyGroup>
+  <StaticViewLocatorViewModelNamespacePrefixes>MyApp.ViewModels;MyApp.Modules</StaticViewLocatorViewModelNamespacePrefixes>
+  <StaticViewLocatorIncludeInternalViewModels>false</StaticViewLocatorIncludeInternalViewModels>
+</PropertyGroup>
+```
+
+- `StaticViewLocatorViewModelNamespacePrefixes` uses `;` or `,` separators and defaults to all namespaces.
+- `StaticViewLocatorIncludeInternalViewModels` defaults to `false` and only applies to view models from referenced assemblies.
+
 ## License
 
 StaticViewLocator is licensed under the MIT license. See [LICENSE](LICENSE.TXT) file for details.

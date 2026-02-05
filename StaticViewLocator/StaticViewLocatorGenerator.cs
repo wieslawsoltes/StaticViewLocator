@@ -18,6 +18,19 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private const string ViewModelSuffix = "ViewModel";
     private const string ViewSuffix = "View";
     private const string ViewModelNamespacePrefixesProperty = "build_property.StaticViewLocatorViewModelNamespacePrefixes";
+    private const string IncludeInternalViewModelsProperty = "build_property.StaticViewLocatorIncludeInternalViewModels";
+
+    private readonly struct GeneratorOptions
+    {
+        public GeneratorOptions(ImmutableArray<string> namespacePrefixes, bool includeInternalViewModels)
+        {
+            NamespacePrefixes = namespacePrefixes;
+            IncludeInternalViewModels = includeInternalViewModels;
+        }
+
+        public ImmutableArray<string> NamespacePrefixes { get; }
+        public bool IncludeInternalViewModels { get; }
+    }
 
     private const string AttributeText =
         """
@@ -63,8 +76,8 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             .Combine(referencedViewModelsProvider)
             .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
 
-        var namespacePrefixesProvider = context.AnalyzerConfigOptionsProvider
-            .Select(static (options, _) => GetNamespacePrefixes(options));
+        var optionsProvider = context.AnalyzerConfigOptionsProvider
+            .Select(static (options, _) => GetGeneratorOptions(options));
 
         var locatorsProvider = context.SyntaxProvider.ForAttributeWithMetadataName(
             StaticViewLocatorAttributeDisplayString,
@@ -74,13 +87,13 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         var inputs = locatorsProvider
             .Combine(context.CompilationProvider)
             .Combine(allViewModelsProvider)
-            .Combine(namespacePrefixesProvider);
+            .Combine(optionsProvider);
 
         context.RegisterSourceOutput(inputs, static (sourceProductionContext, tuple) =>
         {
-            var (((locatorSymbol, compilation), viewModelSymbols), namespacePrefixes) = tuple;
+            var (((locatorSymbol, compilation), viewModelSymbols), options) = tuple;
 
-            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, namespacePrefixes);
+            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, options);
             if (classSource is not null)
             {
                 sourceProductionContext.AddSource(
@@ -128,6 +141,14 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
     }
 
+    private static GeneratorOptions GetGeneratorOptions(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        var namespacePrefixes = GetNamespacePrefixes(optionsProvider);
+        var includeInternal = GetIncludeInternalViewModels(optionsProvider);
+
+        return new GeneratorOptions(namespacePrefixes, includeInternal);
+    }
+
     private static ImmutableArray<string> GetNamespacePrefixes(AnalyzerConfigOptionsProvider optionsProvider)
     {
         if (!optionsProvider.GlobalOptions.TryGetValue(ViewModelNamespacePrefixesProperty, out var rawValue))
@@ -159,6 +180,16 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         return builder.ToImmutable();
     }
 
+    private static bool GetIncludeInternalViewModels(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(IncludeInternalViewModelsProperty, out var rawValue))
+        {
+            return false;
+        }
+
+        return bool.TryParse(rawValue, out var includeInternal) && includeInternal;
+    }
+
     private static bool IsViewModelType(INamedTypeSymbol symbol)
     {
         if (symbol.TypeKind != TypeKind.Class || symbol.IsAbstract)
@@ -169,14 +200,19 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         return symbol.Name.EndsWith(ViewModelSuffix, StringComparison.Ordinal);
     }
 
-    private static bool IsViewModelCandidate(INamedTypeSymbol symbol, ImmutableArray<string> namespacePrefixes)
+    private static bool IsViewModelCandidate(INamedTypeSymbol symbol, Compilation compilation, GeneratorOptions options)
     {
         if (!IsViewModelType(symbol))
         {
             return false;
         }
 
-        if (namespacePrefixes.IsDefaultOrEmpty)
+        if (!IsViewModelAccessible(symbol, compilation, options.IncludeInternalViewModels))
+        {
+            return false;
+        }
+
+        if (options.NamespacePrefixes.IsDefaultOrEmpty)
         {
             return true;
         }
@@ -187,7 +223,62 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             return false;
         }
 
-        return MatchesNamespace(namespaceName, namespacePrefixes);
+        return MatchesNamespace(namespaceName, options.NamespacePrefixes);
+    }
+
+    private static bool IsViewModelAccessible(
+        INamedTypeSymbol symbol,
+        Compilation compilation,
+        bool includeInternal)
+    {
+        if (SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly))
+        {
+            return true;
+        }
+
+        if (symbol.DeclaredAccessibility == Accessibility.Public && IsContainingTypesPublic(symbol))
+        {
+            return true;
+        }
+
+        if (!includeInternal || symbol.DeclaredAccessibility != Accessibility.Internal)
+        {
+            return false;
+        }
+
+        if (!IsContainingTypesAtMostInternal(symbol))
+        {
+            return false;
+        }
+
+        return symbol.ContainingAssembly.GivesAccessTo(compilation.Assembly);
+    }
+
+    private static bool IsContainingTypesPublic(INamedTypeSymbol symbol)
+    {
+        for (var containing = symbol.ContainingType; containing is not null; containing = containing.ContainingType)
+        {
+            if (containing.DeclaredAccessibility != Accessibility.Public)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsContainingTypesAtMostInternal(INamedTypeSymbol symbol)
+    {
+        for (var containing = symbol.ContainingType; containing is not null; containing = containing.ContainingType)
+        {
+            var accessibility = containing.DeclaredAccessibility;
+            if (accessibility != Accessibility.Public && accessibility != Accessibility.Internal)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool MatchesNamespace(string namespaceName, ImmutableArray<string> namespacePrefixes)
@@ -214,7 +305,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
         ImmutableArray<INamedTypeSymbol> viewModelSymbols,
-        ImmutableArray<string> namespacePrefixes)
+        GeneratorOptions options)
     {
         if (!locatorSymbol.ContainingSymbol.Equals(locatorSymbol.ContainingNamespace, SymbolEqualityComparer.Default))
         {
@@ -240,7 +331,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         foreach (var symbol in viewModelSymbols)
         {
-            if (!IsViewModelCandidate(symbol, namespacePrefixes))
+            if (!IsViewModelCandidate(symbol, compilation, options))
             {
                 continue;
             }
