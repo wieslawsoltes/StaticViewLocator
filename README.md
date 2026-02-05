@@ -68,11 +68,13 @@ You can scope which view model namespaces are considered and optionally include 
 <PropertyGroup>
   <StaticViewLocatorViewModelNamespacePrefixes>MyApp.ViewModels;MyApp.Modules</StaticViewLocatorViewModelNamespacePrefixes>
   <StaticViewLocatorIncludeInternalViewModels>false</StaticViewLocatorIncludeInternalViewModels>
+  <StaticViewLocatorIncludeReferencedAssemblies>false</StaticViewLocatorIncludeReferencedAssemblies>
 </PropertyGroup>
 ```
 
 - `StaticViewLocatorViewModelNamespacePrefixes` uses `;` or `,` separators and defaults to all namespaces.
 - `StaticViewLocatorIncludeInternalViewModels` defaults to `false` and only applies to view models from referenced assemblies.
+- `StaticViewLocatorIncludeReferencedAssemblies` defaults to `false` and only applies to view models from referenced assemblies.
 
 ## License
 

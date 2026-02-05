@@ -19,17 +19,23 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private const string ViewSuffix = "View";
     private const string ViewModelNamespacePrefixesProperty = "build_property.StaticViewLocatorViewModelNamespacePrefixes";
     private const string IncludeInternalViewModelsProperty = "build_property.StaticViewLocatorIncludeInternalViewModels";
+    private const string IncludeReferencedAssembliesProperty = "build_property.StaticViewLocatorIncludeReferencedAssemblies";
 
     private readonly struct GeneratorOptions
     {
-        public GeneratorOptions(ImmutableArray<string> namespacePrefixes, bool includeInternalViewModels)
+        public GeneratorOptions(
+            ImmutableArray<string> namespacePrefixes,
+            bool includeInternalViewModels,
+            bool includeReferencedAssemblies)
         {
             NamespacePrefixes = namespacePrefixes;
             IncludeInternalViewModels = includeInternalViewModels;
+            IncludeReferencedAssemblies = includeReferencedAssemblies;
         }
 
         public ImmutableArray<string> NamespacePrefixes { get; }
         public bool IncludeInternalViewModels { get; }
+        public bool IncludeReferencedAssemblies { get; }
     }
 
     private const string AttributeText =
@@ -69,15 +75,19 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             .Select(static (symbol, _) => symbol!)
             .Collect();
 
+        var optionsProvider = context.AnalyzerConfigOptionsProvider
+            .Select(static (options, _) => GetGeneratorOptions(options));
+
         var referencedViewModelsProvider = context.CompilationProvider
-            .Select(static (compilation, _) => GetReferencedViewModels(compilation));
+            .Combine(optionsProvider)
+            .Select(static (pair, _) =>
+                pair.Right.IncludeReferencedAssemblies
+                    ? GetReferencedViewModels(pair.Left)
+                    : ImmutableArray<INamedTypeSymbol>.Empty);
 
         var allViewModelsProvider = viewModelsProvider
             .Combine(referencedViewModelsProvider)
             .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
-
-        var optionsProvider = context.AnalyzerConfigOptionsProvider
-            .Select(static (options, _) => GetGeneratorOptions(options));
 
         var locatorsProvider = context.SyntaxProvider.ForAttributeWithMetadataName(
             StaticViewLocatorAttributeDisplayString,
@@ -145,8 +155,9 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     {
         var namespacePrefixes = GetNamespacePrefixes(optionsProvider);
         var includeInternal = GetIncludeInternalViewModels(optionsProvider);
+        var includeReferencedAssemblies = GetIncludeReferencedAssemblies(optionsProvider);
 
-        return new GeneratorOptions(namespacePrefixes, includeInternal);
+        return new GeneratorOptions(namespacePrefixes, includeInternal, includeReferencedAssemblies);
     }
 
     private static ImmutableArray<string> GetNamespacePrefixes(AnalyzerConfigOptionsProvider optionsProvider)
@@ -188,6 +199,16 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         return bool.TryParse(rawValue, out var includeInternal) && includeInternal;
+    }
+
+    private static bool GetIncludeReferencedAssemblies(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(IncludeReferencedAssembliesProperty, out var rawValue))
+        {
+            return false;
+        }
+
+        return bool.TryParse(rawValue, out var includeReferencedAssemblies) && includeReferencedAssemblies;
     }
 
     private static bool IsViewModelType(INamedTypeSymbol symbol)
