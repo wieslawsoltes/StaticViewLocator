@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 
 namespace StaticViewLocator;
@@ -16,6 +17,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private const string StaticViewLocatorAttributeDisplayString = "StaticViewLocator.StaticViewLocatorAttribute";
     private const string ViewModelSuffix = "ViewModel";
     private const string ViewSuffix = "View";
+    private const string ViewModelNamespacePrefixesProperty = "build_property.StaticViewLocatorViewModelNamespacePrefixes";
 
     private const string AttributeText =
         """
@@ -54,6 +56,16 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             .Select(static (symbol, _) => symbol!)
             .Collect();
 
+        var referencedViewModelsProvider = context.CompilationProvider
+            .Select(static (compilation, _) => GetReferencedViewModels(compilation));
+
+        var allViewModelsProvider = viewModelsProvider
+            .Combine(referencedViewModelsProvider)
+            .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
+
+        var namespacePrefixesProvider = context.AnalyzerConfigOptionsProvider
+            .Select(static (options, _) => GetNamespacePrefixes(options));
+
         var locatorsProvider = context.SyntaxProvider.ForAttributeWithMetadataName(
             StaticViewLocatorAttributeDisplayString,
             static (node, _) => node is ClassDeclarationSyntax,
@@ -61,13 +73,14 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         var inputs = locatorsProvider
             .Combine(context.CompilationProvider)
-            .Combine(viewModelsProvider);
+            .Combine(allViewModelsProvider)
+            .Combine(namespacePrefixesProvider);
 
         context.RegisterSourceOutput(inputs, static (sourceProductionContext, tuple) =>
         {
-            var ((locatorSymbol, compilation), viewModelSymbols) = tuple;
+            var (((locatorSymbol, compilation), viewModelSymbols), namespacePrefixes) = tuple;
 
-            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols);
+            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, namespacePrefixes);
             if (classSource is not null)
             {
                 sourceProductionContext.AddSource(
@@ -77,7 +90,131 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         });
     }
 
-    private static string? ProcessClass(Compilation compilation, INamedTypeSymbol locatorSymbol, ImmutableArray<INamedTypeSymbol> viewModelSymbols)
+    private static ImmutableArray<INamedTypeSymbol> GetReferencedViewModels(Compilation compilation)
+    {
+        var builder = ImmutableArray.CreateBuilder<INamedTypeSymbol>();
+
+        foreach (var assembly in compilation.SourceModule.ReferencedAssemblySymbols)
+        {
+            CollectViewModels(assembly.GlobalNamespace, builder);
+        }
+
+        return builder.ToImmutable();
+    }
+
+    private static void CollectViewModels(INamespaceSymbol namespaceSymbol, ImmutableArray<INamedTypeSymbol>.Builder builder)
+    {
+        foreach (var type in namespaceSymbol.GetTypeMembers())
+        {
+            CollectViewModels(type, builder);
+        }
+
+        foreach (var child in namespaceSymbol.GetNamespaceMembers())
+        {
+            CollectViewModels(child, builder);
+        }
+    }
+
+    private static void CollectViewModels(INamedTypeSymbol typeSymbol, ImmutableArray<INamedTypeSymbol>.Builder builder)
+    {
+        if (IsViewModelType(typeSymbol))
+        {
+            builder.Add(typeSymbol);
+        }
+
+        foreach (var nested in typeSymbol.GetTypeMembers())
+        {
+            CollectViewModels(nested, builder);
+        }
+    }
+
+    private static ImmutableArray<string> GetNamespacePrefixes(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(ViewModelNamespacePrefixesProperty, out var rawValue))
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        var parts = rawValue.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        var builder = ImmutableArray.CreateBuilder<string>(parts.Length);
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length > 0)
+            {
+                builder.Add(trimmed);
+            }
+        }
+
+        return builder.ToImmutable();
+    }
+
+    private static bool IsViewModelType(INamedTypeSymbol symbol)
+    {
+        if (symbol.TypeKind != TypeKind.Class || symbol.IsAbstract)
+        {
+            return false;
+        }
+
+        return symbol.Name.EndsWith(ViewModelSuffix, StringComparison.Ordinal);
+    }
+
+    private static bool IsViewModelCandidate(INamedTypeSymbol symbol, ImmutableArray<string> namespacePrefixes)
+    {
+        if (!IsViewModelType(symbol))
+        {
+            return false;
+        }
+
+        if (namespacePrefixes.IsDefaultOrEmpty)
+        {
+            return true;
+        }
+
+        var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+        if (namespaceName.Length == 0)
+        {
+            return false;
+        }
+
+        return MatchesNamespace(namespaceName, namespacePrefixes);
+    }
+
+    private static bool MatchesNamespace(string namespaceName, ImmutableArray<string> namespacePrefixes)
+    {
+        foreach (var prefix in namespacePrefixes)
+        {
+            if (string.IsNullOrWhiteSpace(prefix))
+            {
+                continue;
+            }
+
+            var normalized = prefix.Trim();
+            if (namespaceName.Equals(normalized, StringComparison.Ordinal) ||
+                namespaceName.StartsWith(normalized + ".", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? ProcessClass(
+        Compilation compilation,
+        INamedTypeSymbol locatorSymbol,
+        ImmutableArray<INamedTypeSymbol> viewModelSymbols,
+        ImmutableArray<string> namespacePrefixes)
     {
         if (!locatorSymbol.ContainingSymbol.Equals(locatorSymbol.ContainingNamespace, SymbolEqualityComparer.Default))
         {
@@ -103,7 +240,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         foreach (var symbol in viewModelSymbols)
         {
-            if (!symbol.Name.EndsWith(ViewModelSuffix, StringComparison.Ordinal) || symbol.IsAbstract)
+            if (!IsViewModelCandidate(symbol, namespacePrefixes))
             {
                 continue;
             }
