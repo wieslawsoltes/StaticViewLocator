@@ -79,6 +79,8 @@ Defaults and behavior:
 - `StaticViewLocatorIncludeInternalViewModels` defaults to `false`. When `true`, internal view models from referenced assemblies are included only if the referenced assembly exposes them via `InternalsVisibleTo`.
 - `StaticViewLocatorAdditionalViewBaseTypes` uses `;` or `,` separators and extends the default view base type list.
 
+These properties are exported as `CompilerVisibleProperty` by the package, so analyzers can read them without extra project configuration.
+
 Default view base types:
 - `Avalonia.Controls.UserControl`
 - `Avalonia.Controls.Window`

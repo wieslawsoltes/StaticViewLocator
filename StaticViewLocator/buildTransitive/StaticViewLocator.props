@@ -1,0 +1,8 @@
+<Project>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="StaticViewLocatorViewModelNamespacePrefixes" />
+    <CompilerVisibleProperty Include="StaticViewLocatorIncludeReferencedAssemblies" />
+    <CompilerVisibleProperty Include="StaticViewLocatorIncludeInternalViewModels" />
+    <CompilerVisibleProperty Include="StaticViewLocatorAdditionalViewBaseTypes" />
+  </ItemGroup>
+</Project>
