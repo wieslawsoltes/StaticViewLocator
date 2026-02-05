@@ -62,19 +62,30 @@ public partial class ViewLocator
 
 ## MSBuild configuration
 
-You can scope which view model namespaces are considered and optionally include internal view models.
+You can scope which view model namespaces are considered and opt into additional behaviors.
 
 ```xml
 <PropertyGroup>
   <StaticViewLocatorViewModelNamespacePrefixes>MyApp.ViewModels;MyApp.Modules</StaticViewLocatorViewModelNamespacePrefixes>
   <StaticViewLocatorIncludeInternalViewModels>false</StaticViewLocatorIncludeInternalViewModels>
   <StaticViewLocatorIncludeReferencedAssemblies>false</StaticViewLocatorIncludeReferencedAssemblies>
+  <StaticViewLocatorAdditionalViewBaseTypes>MyApp.Controls.ToolWindowBase</StaticViewLocatorAdditionalViewBaseTypes>
 </PropertyGroup>
 ```
 
+Defaults and behavior:
 - `StaticViewLocatorViewModelNamespacePrefixes` uses `;` or `,` separators and defaults to all namespaces.
-- `StaticViewLocatorIncludeInternalViewModels` defaults to `false` and only applies to view models from referenced assemblies.
-- `StaticViewLocatorIncludeReferencedAssemblies` defaults to `false` and only applies to view models from referenced assemblies.
+- `StaticViewLocatorIncludeReferencedAssemblies` defaults to `false`. When `true`, view models from referenced assemblies are included.
+- `StaticViewLocatorIncludeInternalViewModels` defaults to `false`. When `true`, internal view models from referenced assemblies are included only if the referenced assembly exposes them via `InternalsVisibleTo`.
+- `StaticViewLocatorAdditionalViewBaseTypes` uses `;` or `,` separators and extends the default view base type list.
+
+Default view base types:
+- `Avalonia.Controls.UserControl`
+- `Avalonia.Controls.Window`
+
+Accessibility rules:
+- View models in the current compilation are always eligible (subject to namespace prefixes).
+- Referenced assembly view models must be public unless `StaticViewLocatorIncludeInternalViewModels` is enabled and `InternalsVisibleTo` is configured.
 
 ## License
 

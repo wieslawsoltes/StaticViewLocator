@@ -20,22 +20,26 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private const string ViewModelNamespacePrefixesProperty = "build_property.StaticViewLocatorViewModelNamespacePrefixes";
     private const string IncludeInternalViewModelsProperty = "build_property.StaticViewLocatorIncludeInternalViewModels";
     private const string IncludeReferencedAssembliesProperty = "build_property.StaticViewLocatorIncludeReferencedAssemblies";
+    private const string AdditionalViewBaseTypesProperty = "build_property.StaticViewLocatorAdditionalViewBaseTypes";
 
     private readonly struct GeneratorOptions
     {
         public GeneratorOptions(
             ImmutableArray<string> namespacePrefixes,
             bool includeInternalViewModels,
-            bool includeReferencedAssemblies)
+            bool includeReferencedAssemblies,
+            ImmutableArray<string> additionalViewBaseTypes)
         {
             NamespacePrefixes = namespacePrefixes;
             IncludeInternalViewModels = includeInternalViewModels;
             IncludeReferencedAssemblies = includeReferencedAssemblies;
+            AdditionalViewBaseTypes = additionalViewBaseTypes;
         }
 
         public ImmutableArray<string> NamespacePrefixes { get; }
         public bool IncludeInternalViewModels { get; }
         public bool IncludeReferencedAssemblies { get; }
+        public ImmutableArray<string> AdditionalViewBaseTypes { get; }
     }
 
     private const string AttributeText =
@@ -156,8 +160,13 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         var namespacePrefixes = GetNamespacePrefixes(optionsProvider);
         var includeInternal = GetIncludeInternalViewModels(optionsProvider);
         var includeReferencedAssemblies = GetIncludeReferencedAssemblies(optionsProvider);
+        var additionalViewBaseTypes = GetAdditionalViewBaseTypes(optionsProvider);
 
-        return new GeneratorOptions(namespacePrefixes, includeInternal, includeReferencedAssemblies);
+        return new GeneratorOptions(
+            namespacePrefixes,
+            includeInternal,
+            includeReferencedAssemblies,
+            additionalViewBaseTypes);
     }
 
     private static ImmutableArray<string> GetNamespacePrefixes(AnalyzerConfigOptionsProvider optionsProvider)
@@ -209,6 +218,37 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         return bool.TryParse(rawValue, out var includeReferencedAssemblies) && includeReferencedAssemblies;
+    }
+
+    private static ImmutableArray<string> GetAdditionalViewBaseTypes(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(AdditionalViewBaseTypesProperty, out var rawValue))
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        var parts = rawValue.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return ImmutableArray<string>.Empty;
+        }
+
+        var builder = ImmutableArray.CreateBuilder<string>(parts.Length);
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length > 0)
+            {
+                builder.Add(trimmed);
+            }
+        }
+
+        return builder.ToImmutable();
     }
 
     private static bool IsViewModelType(INamedTypeSymbol symbol)
@@ -384,7 +424,27 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         source.AppendLine("\tprivate static Dictionary<Type, Func<Control>> s_views = new()");
         source.AppendLine("\t{");
 
+        var viewBaseTypes = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var userControlViewSymbol = compilation.GetTypeByMetadataName("Avalonia.Controls.UserControl");
+        if (userControlViewSymbol is not null)
+        {
+            viewBaseTypes.Add(userControlViewSymbol);
+        }
+
+        var windowViewSymbol = compilation.GetTypeByMetadataName("Avalonia.Controls.Window");
+        if (windowViewSymbol is not null)
+        {
+            viewBaseTypes.Add(windowViewSymbol);
+        }
+
+        foreach (var additionalTypeName in options.AdditionalViewBaseTypes)
+        {
+            var additionalSymbol = compilation.GetTypeByMetadataName(additionalTypeName);
+            if (additionalSymbol is not null)
+            {
+                viewBaseTypes.Add(additionalSymbol);
+            }
+        }
 
         foreach (var viewModelSymbol in relevantViewModels)
         {
@@ -393,7 +453,20 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             var classNameView = classNameViewModel.Replace(ViewModelSuffix, ViewSuffix);
 
             var viewSymbol = compilation.GetTypeByMetadataName(classNameView);
-            if (viewSymbol is null || viewSymbol.BaseType?.Equals(userControlViewSymbol, SymbolEqualityComparer.Default) != true)
+            var isSupportedView = false;
+            if (viewSymbol is not null && viewBaseTypes.Count > 0)
+            {
+                for (var current = viewSymbol; current is not null; current = current.BaseType)
+                {
+                    if (viewBaseTypes.Contains(current))
+                    {
+                        isSupportedView = true;
+                        break;
+                    }
+                }
+            }
+
+            if (viewSymbol is null || !isSupportedView)
             {
                 source.AppendLine(
                     $"\t\t[typeof({classNameViewModel})] = () => new TextBlock() {{ Text = \"Not Found: {classNameView}\" }},");
