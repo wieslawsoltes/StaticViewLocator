@@ -7,5 +7,6 @@
     <CompilerVisibleProperty Include="StaticViewLocatorNamespaceReplacementRules" />
     <CompilerVisibleProperty Include="StaticViewLocatorTypeNameReplacementRules" />
     <CompilerVisibleProperty Include="StaticViewLocatorStripGenericArityFromViewName" />
+    <CompilerVisibleProperty Include="StaticViewLocatorInterfacePrefixesToStrip" />
   </ItemGroup>
 </Project>

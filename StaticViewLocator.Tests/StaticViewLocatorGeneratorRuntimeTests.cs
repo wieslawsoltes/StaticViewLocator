@@ -30,15 +30,6 @@ namespace TestApp
     [StaticViewLocator]
     public partial class ViewLocator
     {
-        public static Control Resolve(object vm)
-        {
-            if (vm is null)
-            {
-                throw new ArgumentNullException(nameof(vm));
-            }
-
-            return s_views[vm.GetType()]();
-        }
     }
 }
 
@@ -76,14 +67,15 @@ namespace TestApp.Views
         var assembly = Assembly.Load(peStream.ToArray());
 
         var locatorType = assembly.GetType("TestApp.ViewLocator") ?? throw new InvalidOperationException("Generated locator type not found.");
-        var resolveMethod = locatorType.GetMethod("Resolve", BindingFlags.Public | BindingFlags.Static) ?? throw new InvalidOperationException("Resolve method not found.");
+        var buildMethod = locatorType.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance) ?? throw new InvalidOperationException("Build method not found.");
+        var locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException("Unable to instantiate generated locator.");
         var sampleViewModel = CreateInstance(assembly, "TestApp.ViewModels.SampleViewModel");
         var missingViewModel = CreateInstance(assembly, "TestApp.ViewModels.MissingViewModel");
 
         _ = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(StaticViewLocatorGeneratorRuntimeTests).Assembly);
 
-        var sampleControl = (Control)resolveMethod.Invoke(null, new[] { sampleViewModel })!;
-        var missingControl = (Control)resolveMethod.Invoke(null, new[] { missingViewModel })!;
+        var sampleControl = (Control)buildMethod.Invoke(locator, new[] { sampleViewModel })!;
+        var missingControl = (Control)buildMethod.Invoke(locator, new[] { missingViewModel })!;
 
         Assert.Equal("TestApp.Views.SampleView", sampleControl.GetType().FullName);
         Assert.Equal("Avalonia.Controls.TextBlock", missingControl.GetType().FullName);
@@ -104,15 +96,6 @@ namespace Portal
     [StaticViewLocator]
     public partial class PortalViewLocator
     {
-        public static Control Locate(object vm)
-        {
-            if (vm is null)
-            {
-                throw new ArgumentNullException(nameof(vm));
-            }
-
-            return s_views[vm.GetType()]();
-        }
     }
 }
 
@@ -166,7 +149,8 @@ namespace Portal.Views
         var assembly = Assembly.Load(peStream.ToArray());
 
         var locatorType = assembly.GetType("Portal.PortalViewLocator") ?? throw new InvalidOperationException("Generated locator type not found.");
-        var locateMethod = locatorType.GetMethod("Locate", BindingFlags.Public | BindingFlags.Static) ?? throw new InvalidOperationException("Locate method not found.");
+        var buildMethod = locatorType.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance) ?? throw new InvalidOperationException("Build method not found.");
+        var locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException("Unable to instantiate generated locator.");
         var dictionaryField = locatorType.GetField("s_views", BindingFlags.NonPublic | BindingFlags.Static) ?? throw new InvalidOperationException("Dictionary field not found.");
         var viewsMap = (Dictionary<Type, Func<Control>>)dictionaryField.GetValue(null)!;
 
@@ -174,7 +158,6 @@ namespace Portal.Views
         {
             "Portal.ViewModels.HomeViewModel",
             "Portal.ViewModels.ReportsViewModel",
-            "Portal.ViewModels.SettingsViewModel",
         };
 
         Assert.Equal(expectedOrder.Length, viewsMap.Count);
@@ -184,9 +167,9 @@ namespace Portal.Views
         var reportsViewModel = CreateInstance(assembly, "Portal.ViewModels.ReportsViewModel");
         var settingsViewModel = CreateInstance(assembly, "Portal.ViewModels.SettingsViewModel");
 
-        var homeControl = (Control)locateMethod.Invoke(null, new[] { homeViewModel })!;
-        var reportsControl = (Control)locateMethod.Invoke(null, new[] { reportsViewModel })!;
-        var settingsControl = (Control)locateMethod.Invoke(null, new[] { settingsViewModel })!;
+        var homeControl = (Control)buildMethod.Invoke(locator, new[] { homeViewModel })!;
+        var reportsControl = (Control)buildMethod.Invoke(locator, new[] { reportsViewModel })!;
+        var settingsControl = (Control)buildMethod.Invoke(locator, new[] { settingsViewModel })!;
 
         Assert.Equal("Portal.Views.HomeView", homeControl.GetType().FullName);
         Assert.Equal("Portal.Views.ReportsView", reportsControl.GetType().FullName);
@@ -261,6 +244,138 @@ namespace TestApp.Views
 
         Assert.NotNull(control);
         Assert.Equal("TestApp.Views.WidgetView", control!.GetType().FullName);
+    }
+
+    [AvaloniaFact]
+    public async Task ResolvesUsingBaseClassBeforeInterfaceFallback()
+    {
+        const string source = @"
+using System;
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator
+    {
+    }
+}
+
+namespace TestApp.ViewModels
+{
+    public abstract class BaseViewModel
+    {
+    }
+
+    public interface IAlternateViewModel
+    {
+    }
+
+    public sealed class ConcreteViewModel : BaseViewModel, IAlternateViewModel
+    {
+    }
+}
+
+namespace TestApp.Views
+{
+    public class BaseView : UserControl
+    {
+    }
+
+    public class AlternateView : UserControl
+    {
+    }
+}
+";
+
+        var compilation = await CreateCompilationAsync(source);
+        var sourceGenerator = new StaticViewLocatorGenerator().AsSourceGenerator();
+        var driver = CSharpGeneratorDriver.Create(new[] { sourceGenerator }, parseOptions: (CSharpParseOptions)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var updatedCompilation, out var diagnostics);
+
+        Assert.Empty(diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        using var peStream = new MemoryStream();
+        var emitResult = updatedCompilation.Emit(peStream);
+        Assert.True(emitResult.Success, string.Join(Environment.NewLine, emitResult.Diagnostics));
+
+        peStream.Seek(0, SeekOrigin.Begin);
+        var assembly = Assembly.Load(peStream.ToArray());
+
+        var locatorType = assembly.GetType("TestApp.ViewLocator") ?? throw new InvalidOperationException("Generated locator type not found.");
+        var buildMethod = locatorType.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance) ?? throw new InvalidOperationException("Build method not found.");
+        var concreteViewModel = CreateInstance(assembly, "TestApp.ViewModels.ConcreteViewModel");
+        var locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException("Unable to instantiate generated locator.");
+
+        _ = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(StaticViewLocatorGeneratorRuntimeTests).Assembly);
+
+        var control = (Control?)buildMethod.Invoke(locator, new[] { concreteViewModel });
+
+        Assert.NotNull(control);
+        Assert.Equal("TestApp.Views.BaseView", control!.GetType().FullName);
+    }
+
+    [AvaloniaFact]
+    public async Task ResolvesInterfaceMappingsByStrippingConfiguredPrefix()
+    {
+        const string source = @"
+using System;
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator
+    {
+    }
+}
+
+namespace TestApp.ViewModels
+{
+    public interface IDetailsViewModel
+    {
+    }
+
+    public sealed class ConcreteViewModel : IDetailsViewModel
+    {
+    }
+}
+
+namespace TestApp.Views
+{
+    public class DetailsView : UserControl
+    {
+    }
+}
+";
+
+        var compilation = await CreateCompilationAsync(source);
+        var sourceGenerator = new StaticViewLocatorGenerator().AsSourceGenerator();
+        var driver = CSharpGeneratorDriver.Create(new[] { sourceGenerator }, parseOptions: (CSharpParseOptions)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var updatedCompilation, out var diagnostics);
+
+        Assert.Empty(diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        using var peStream = new MemoryStream();
+        var emitResult = updatedCompilation.Emit(peStream);
+        Assert.True(emitResult.Success, string.Join(Environment.NewLine, emitResult.Diagnostics));
+
+        peStream.Seek(0, SeekOrigin.Begin);
+        var assembly = Assembly.Load(peStream.ToArray());
+
+        var locatorType = assembly.GetType("TestApp.ViewLocator") ?? throw new InvalidOperationException("Generated locator type not found.");
+        var buildMethod = locatorType.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance) ?? throw new InvalidOperationException("Build method not found.");
+        var concreteViewModel = CreateInstance(assembly, "TestApp.ViewModels.ConcreteViewModel");
+        var locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException("Unable to instantiate generated locator.");
+
+        _ = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(StaticViewLocatorGeneratorRuntimeTests).Assembly);
+
+        var control = (Control?)buildMethod.Invoke(locator, new[] { concreteViewModel });
+
+        Assert.NotNull(control);
+        Assert.Equal("TestApp.Views.DetailsView", control!.GetType().FullName);
     }
 
     private static Task<CSharpCompilation> CreateCompilationAsync(string source)
