@@ -21,6 +21,9 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private const string IncludeInternalViewModelsProperty = "build_property.StaticViewLocatorIncludeInternalViewModels";
     private const string IncludeReferencedAssembliesProperty = "build_property.StaticViewLocatorIncludeReferencedAssemblies";
     private const string AdditionalViewBaseTypesProperty = "build_property.StaticViewLocatorAdditionalViewBaseTypes";
+    private const string NamespaceReplacementRulesProperty = "build_property.StaticViewLocatorNamespaceReplacementRules";
+    private const string TypeNameReplacementRulesProperty = "build_property.StaticViewLocatorTypeNameReplacementRules";
+    private const string StripGenericArityFromViewNameProperty = "build_property.StaticViewLocatorStripGenericArityFromViewName";
 
     private readonly struct GeneratorOptions
     {
@@ -28,18 +31,39 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             ImmutableArray<string> namespacePrefixes,
             bool includeInternalViewModels,
             bool includeReferencedAssemblies,
-            ImmutableArray<string> additionalViewBaseTypes)
+            ImmutableArray<string> additionalViewBaseTypes,
+            ImmutableArray<ReplacementRule> namespaceReplacementRules,
+            ImmutableArray<ReplacementRule> typeNameReplacementRules,
+            bool stripGenericArityFromViewName)
         {
             NamespacePrefixes = namespacePrefixes;
             IncludeInternalViewModels = includeInternalViewModels;
             IncludeReferencedAssemblies = includeReferencedAssemblies;
             AdditionalViewBaseTypes = additionalViewBaseTypes;
+            NamespaceReplacementRules = namespaceReplacementRules;
+            TypeNameReplacementRules = typeNameReplacementRules;
+            StripGenericArityFromViewName = stripGenericArityFromViewName;
         }
 
         public ImmutableArray<string> NamespacePrefixes { get; }
         public bool IncludeInternalViewModels { get; }
         public bool IncludeReferencedAssemblies { get; }
         public ImmutableArray<string> AdditionalViewBaseTypes { get; }
+        public ImmutableArray<ReplacementRule> NamespaceReplacementRules { get; }
+        public ImmutableArray<ReplacementRule> TypeNameReplacementRules { get; }
+        public bool StripGenericArityFromViewName { get; }
+    }
+
+    private readonly struct ReplacementRule
+    {
+        public ReplacementRule(string from, string to)
+        {
+            From = from;
+            To = to;
+        }
+
+        public string From { get; }
+        public string To { get; }
     }
 
     private const string AttributeText =
@@ -161,12 +185,18 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         var includeInternal = GetIncludeInternalViewModels(optionsProvider);
         var includeReferencedAssemblies = GetIncludeReferencedAssemblies(optionsProvider);
         var additionalViewBaseTypes = GetAdditionalViewBaseTypes(optionsProvider);
+        var namespaceReplacementRules = GetReplacementRules(optionsProvider, NamespaceReplacementRulesProperty, new ReplacementRule("ViewModels", "Views"));
+        var typeNameReplacementRules = GetReplacementRules(optionsProvider, TypeNameReplacementRulesProperty, new ReplacementRule(ViewModelSuffix, ViewSuffix));
+        var stripGenericArityFromViewName = GetStripGenericArityFromViewName(optionsProvider);
 
         return new GeneratorOptions(
             namespacePrefixes,
             includeInternal,
             includeReferencedAssemblies,
-            additionalViewBaseTypes);
+            additionalViewBaseTypes,
+            namespaceReplacementRules,
+            typeNameReplacementRules,
+            stripGenericArityFromViewName);
     }
 
     private static ImmutableArray<string> GetNamespacePrefixes(AnalyzerConfigOptionsProvider optionsProvider)
@@ -249,6 +279,68 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         return builder.ToImmutable();
+    }
+
+    private static ImmutableArray<ReplacementRule> GetReplacementRules(
+        AnalyzerConfigOptionsProvider optionsProvider,
+        string propertyName,
+        params ReplacementRule[] defaults)
+    {
+        var builder = ImmutableArray.CreateBuilder<ReplacementRule>();
+
+        if (!optionsProvider.GlobalOptions.TryGetValue(propertyName, out var rawValue) ||
+            string.IsNullOrWhiteSpace(rawValue))
+        {
+            foreach (var replacementRule in defaults)
+            {
+                builder.Add(replacementRule);
+            }
+
+            return builder.ToImmutable();
+        }
+
+        var parts = rawValue.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length == 0)
+            {
+                continue;
+            }
+
+            var separatorIndex = trimmed.IndexOf('=');
+            if (separatorIndex <= 0 || separatorIndex == trimmed.Length - 1)
+            {
+                continue;
+            }
+
+            var from = trimmed.Substring(0, separatorIndex).Trim();
+            var to = trimmed.Substring(separatorIndex + 1).Trim();
+
+            if (from.Length == 0)
+            {
+                continue;
+            }
+
+            builder.Add(new ReplacementRule(from, to));
+        }
+
+        foreach (var replacementRule in defaults)
+        {
+            builder.Add(replacementRule);
+        }
+
+        return builder.ToImmutable();
+    }
+
+    private static bool GetStripGenericArityFromViewName(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(StripGenericArityFromViewNameProperty, out var rawValue))
+        {
+            return true;
+        }
+
+        return !bool.TryParse(rawValue, out var stripGenericArityFromViewName) || stripGenericArityFromViewName;
     }
 
     private static bool IsViewModelType(INamedTypeSymbol symbol)
@@ -362,6 +454,78 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         return false;
     }
 
+    private static string ApplyReplacementRules(string input, ImmutableArray<ReplacementRule> replacementRules)
+    {
+        var value = input;
+
+        foreach (var replacementRule in replacementRules)
+        {
+            value = value.Replace(replacementRule.From, replacementRule.To);
+        }
+
+        return value;
+    }
+
+    private static string GetMetadataTypeName(INamedTypeSymbol symbol)
+    {
+        var parts = new Stack<string>();
+
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            parts.Push(current.MetadataName);
+        }
+
+        return string.Join(".", parts);
+    }
+
+    private static string GetSourceTypeName(INamedTypeSymbol symbol)
+    {
+        var parts = new Stack<string>();
+
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            parts.Push(current.Name);
+        }
+
+        return string.Join(".", parts);
+    }
+
+    private static string GetSourceTypeReference(INamedTypeSymbol symbol)
+    {
+        var parts = new Stack<string>();
+
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            var part = current.Name;
+            if (current.IsGenericType)
+            {
+                part += "<" + new string(',', current.TypeParameters.Length - 1) + ">";
+            }
+
+            parts.Push(part);
+        }
+
+        var typeName = string.Join(".", parts);
+        var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+        return string.IsNullOrEmpty(namespaceName) ? typeName : $"{namespaceName}.{typeName}";
+    }
+
+    private static string StripGenericArity(string typeName)
+    {
+        var parts = typeName.Split('.');
+
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var tickIndex = parts[i].IndexOf('`');
+            if (tickIndex >= 0)
+            {
+                parts[i] = parts[i].Substring(0, tickIndex);
+            }
+        }
+
+        return string.Join(".", parts);
+    }
+
     private static string? ProcessClass(
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
@@ -449,10 +613,26 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         foreach (var viewModelSymbol in relevantViewModels)
         {
             var namespaceNameViewModel = viewModelSymbol.ContainingNamespace.ToDisplayString();
-            var classNameViewModel = $"{namespaceNameViewModel}.{viewModelSymbol.ToDisplayString(format)}";
-            var classNameView = classNameViewModel.Replace(ViewModelSuffix, ViewSuffix);
+            var sourceTypeNameViewModel = GetSourceTypeName(viewModelSymbol);
+            var metadataTypeNameViewModel = GetMetadataTypeName(viewModelSymbol);
 
-            var viewSymbol = compilation.GetTypeByMetadataName(classNameView);
+            var sourceNamespaceView = ApplyReplacementRules(namespaceNameViewModel, options.NamespaceReplacementRules);
+            var metadataNamespaceView = ApplyReplacementRules(namespaceNameViewModel, options.NamespaceReplacementRules);
+
+            var sourceTypeNameView = ApplyReplacementRules(sourceTypeNameViewModel, options.TypeNameReplacementRules);
+            var metadataTypeNameView = ApplyReplacementRules(metadataTypeNameViewModel, options.TypeNameReplacementRules);
+
+            if (options.StripGenericArityFromViewName)
+            {
+                sourceTypeNameView = StripGenericArity(sourceTypeNameView);
+                metadataTypeNameView = StripGenericArity(metadataTypeNameView);
+            }
+
+            var classNameViewModel = GetSourceTypeReference(viewModelSymbol);
+            var classNameView = $"{sourceNamespaceView}.{sourceTypeNameView}";
+            var metadataNameView = $"{metadataNamespaceView}.{metadataTypeNameView}";
+
+            var viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
             var isSupportedView = false;
             if (viewSymbol is not null && viewBaseTypes.Count > 0)
             {
@@ -493,7 +673,13 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
 		var type = data.GetType();
 
-		if (s_views.TryGetValue(type, out var func))
+		if (!s_views.TryGetValue(type, out var func) &&
+		    type.IsGenericType)
+		{
+			s_views.TryGetValue(type.GetGenericTypeDefinition(), out func);
+		}
+
+		if (func is not null)
 		{
 			return func.Invoke();
 		}

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 using StaticViewLocator;
 using Xunit;
 
@@ -15,6 +16,14 @@ namespace StaticViewLocator.Tests.TestHelpers;
 internal static class StaticViewLocatorGeneratorVerifier
 {
     public static Task VerifyGeneratedSourcesAsync(string source, params (string hintName, string source)[] generatedSources)
+    {
+        return VerifyGeneratedSourcesAsync(source, globalOptions: null, generatedSources);
+    }
+
+    public static Task VerifyGeneratedSourcesAsync(
+        string source,
+        IReadOnlyDictionary<string, string>? globalOptions = null,
+        params (string hintName, string source)[] generatedSources)
     {
         var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
         var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
@@ -26,7 +35,11 @@ internal static class StaticViewLocatorGeneratorVerifier
             options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
         var generator = new StaticViewLocatorGenerator().AsSourceGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(new[] { generator }, parseOptions: parseOptions);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators: new[] { generator },
+            additionalTexts: null,
+            parseOptions: parseOptions,
+            optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions));
 
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out var diagnostics);
 
@@ -59,6 +72,38 @@ internal static class StaticViewLocatorGeneratorVerifier
         }
 
         return Task.CompletedTask;
+    }
+
+    private sealed class TestAnalyzerConfigOptionsProvider : AnalyzerConfigOptionsProvider
+    {
+        private static readonly AnalyzerConfigOptions EmptyOptions = new TestAnalyzerConfigOptions(null);
+        private readonly AnalyzerConfigOptions _globalOptions;
+
+        public TestAnalyzerConfigOptionsProvider(IReadOnlyDictionary<string, string>? globalOptions)
+        {
+            _globalOptions = new TestAnalyzerConfigOptions(globalOptions);
+        }
+
+        public override AnalyzerConfigOptions GlobalOptions => _globalOptions;
+
+        public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => EmptyOptions;
+
+        public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => EmptyOptions;
+    }
+
+    private sealed class TestAnalyzerConfigOptions : AnalyzerConfigOptions
+    {
+        private readonly IReadOnlyDictionary<string, string> _options;
+
+        public TestAnalyzerConfigOptions(IReadOnlyDictionary<string, string>? options)
+        {
+            _options = options ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        public override bool TryGetValue(string key, out string value)
+        {
+            return _options.TryGetValue(key, out value!);
+        }
     }
 
     private static IReadOnlyCollection<MetadataReference> GetMetadataReferences()

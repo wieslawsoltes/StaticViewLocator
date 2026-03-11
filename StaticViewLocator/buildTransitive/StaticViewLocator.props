@@ -4,5 +4,8 @@
     <CompilerVisibleProperty Include="StaticViewLocatorIncludeReferencedAssemblies" />
     <CompilerVisibleProperty Include="StaticViewLocatorIncludeInternalViewModels" />
     <CompilerVisibleProperty Include="StaticViewLocatorAdditionalViewBaseTypes" />
+    <CompilerVisibleProperty Include="StaticViewLocatorNamespaceReplacementRules" />
+    <CompilerVisibleProperty Include="StaticViewLocatorTypeNameReplacementRules" />
+    <CompilerVisibleProperty Include="StaticViewLocatorStripGenericArityFromViewName" />
   </ItemGroup>
 </Project>
