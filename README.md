@@ -17,7 +17,7 @@ Add NuGet package reference to project.
 </PackageReference>
 ```
 
-Annotate view locator class with `[StaticViewLocator]` attribute, make class `partial` and imlement `Build` using `s_views` dictionary to retrieve views for `data` objects.
+Annotate a view locator class with `[StaticViewLocator]`, make it `partial`, and let the generator provide the lookup tables and fallback helpers.
 
 ```csharp
 [StaticViewLocator]
@@ -31,10 +31,17 @@ public partial class ViewLocator : IDataTemplate
         }
 
         var type = data.GetType();
+        var func = TryGetFactory(type) ?? TryGetFactoryFromInterfaces(type);
 
-        if (s_views.TryGetValue(type, out var func))
+        if (func is not null)
         {
             return func.Invoke();
+        }
+
+        var missingView = TryGetMissingView(type) ?? TryGetMissingViewFromInterfaces(type);
+        if (missingView is not null)
+        {
+            return new TextBlock { Text = missingView };
         }
 
         throw new Exception($"Unable to create view for type: {type}");
@@ -47,15 +54,39 @@ public partial class ViewLocator : IDataTemplate
 }
 ```
 
-Source generator will generate the `s_views` dictionary similar to below code using convention based on `ViewModel` suffix for view models subsituted to `View` suffix.
+The generator emits:
+- `s_views`: resolved mappings from `Type` to `Func<Control>`
+- `s_missingViews`: unresolved mappings used for `"Not Found: ..."` fallback text
+- helper methods for exact type lookup, generic type-definition lookup, base-class fallback, and interface fallback
+
+By default, the generated lookup order is:
+1. exact runtime type
+2. generic type definition for generic runtime types
+3. base type chain
+4. implemented interfaces in reverse order
+
+Source generator will generate mappings using convention-based transforms. By default:
+- namespace `ViewModels` becomes `Views`
+- type suffix `ViewModel` becomes `View`
+- generic arity markers are removed from the target view name
+- interface prefix `I` is stripped before resolving the target view name
+
+This allows patterns like:
+- `MyApp.ViewModels.SettingsViewModel -> MyApp.Views.SettingsView`
+- `MyApp.ViewModels.WidgetViewModel<T> -> MyApp.Views.WidgetView`
+- `MyApp.ViewModels.IDetailsViewModel -> MyApp.Views.DetailsView`
 
 ```csharp
 public partial class ViewLocator
 {
 	private static Dictionary<Type, Func<Control>> s_views = new()
 	{
-		[typeof(StaticViewLocatorDemo.ViewModels.MainWindowViewModel)] = () => new TextBlock() { Text = "Not Found: StaticViewLocatorDemo.Views.MainWindowView" },
 		[typeof(StaticViewLocatorDemo.ViewModels.TestViewModel)] = () => new StaticViewLocatorDemo.Views.TestView(),
+	};
+
+	private static Dictionary<Type, string> s_missingViews = new()
+	{
+		[typeof(StaticViewLocatorDemo.ViewModels.MainWindowViewModel)] = "Not Found: StaticViewLocatorDemo.Views.MainWindowView",
 	};
 }
 ```
@@ -73,6 +104,7 @@ You can scope which view model namespaces are considered and opt into additional
   <StaticViewLocatorNamespaceReplacementRules>ViewModels=Views</StaticViewLocatorNamespaceReplacementRules>
   <StaticViewLocatorTypeNameReplacementRules>ViewModel=View;Vm=Page</StaticViewLocatorTypeNameReplacementRules>
   <StaticViewLocatorStripGenericArityFromViewName>true</StaticViewLocatorStripGenericArityFromViewName>
+  <StaticViewLocatorInterfacePrefixesToStrip>I</StaticViewLocatorInterfacePrefixesToStrip>
 </PropertyGroup>
 ```
 
@@ -84,8 +116,28 @@ Defaults and behavior:
 - `StaticViewLocatorNamespaceReplacementRules` uses `;` or `,` separators with `from=to` pairs and is applied sequentially to the view-model namespace when deriving the target view namespace. The default includes `ViewModels=Views`.
 - `StaticViewLocatorTypeNameReplacementRules` uses `;` or `,` separators with `from=to` pairs and is applied sequentially to the view-model type name when deriving the target view name. The default includes `ViewModel=View`.
 - `StaticViewLocatorStripGenericArityFromViewName` defaults to `true`. When enabled, generic arity markers like `` `1 `` are removed from the derived target view name, so `WidgetViewModel<T>` can map to `WidgetView`.
+- `StaticViewLocatorInterfacePrefixesToStrip` uses `;` or `,` separators and is applied to interface view-model names before looking up the target view. The default includes `I`.
 
 These properties are exported as `CompilerVisibleProperty` by the package, so analyzers can read them without extra project configuration.
+
+## Supported resolution features
+
+- Exact type mapping
+- Open generic mapping, for example `WidgetViewModel<T> -> WidgetView`
+- Base-class fallback
+- Interface fallback
+- Configurable namespace replacement rules
+- Configurable type-name replacement rules
+- Configurable interface prefix stripping
+- Configurable additional allowed view base types
+- Optional referenced-assembly scanning
+- Optional internal view-model inclusion
+
+## Notes
+
+- Candidate discovery still starts from types whose names end with `ViewModel`.
+- Missing views do not block fallback resolution. The generator keeps unresolved targets in `s_missingViews`, so a derived type can still fall back to a base-class or interface mapping before returning a `"Not Found"` placeholder.
+- If you provide custom replacement rules, they take precedence over the built-in defaults.
 
 Default view base types:
 - `Avalonia.Controls.UserControl`
