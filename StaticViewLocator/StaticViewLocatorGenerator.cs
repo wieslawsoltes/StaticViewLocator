@@ -21,6 +21,10 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private const string IncludeInternalViewModelsProperty = "build_property.StaticViewLocatorIncludeInternalViewModels";
     private const string IncludeReferencedAssembliesProperty = "build_property.StaticViewLocatorIncludeReferencedAssemblies";
     private const string AdditionalViewBaseTypesProperty = "build_property.StaticViewLocatorAdditionalViewBaseTypes";
+    private const string NamespaceReplacementRulesProperty = "build_property.StaticViewLocatorNamespaceReplacementRules";
+    private const string TypeNameReplacementRulesProperty = "build_property.StaticViewLocatorTypeNameReplacementRules";
+    private const string StripGenericArityFromViewNameProperty = "build_property.StaticViewLocatorStripGenericArityFromViewName";
+    private const string InterfacePrefixesToStripProperty = "build_property.StaticViewLocatorInterfacePrefixesToStrip";
 
     private readonly struct GeneratorOptions
     {
@@ -28,18 +32,42 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             ImmutableArray<string> namespacePrefixes,
             bool includeInternalViewModels,
             bool includeReferencedAssemblies,
-            ImmutableArray<string> additionalViewBaseTypes)
+            ImmutableArray<string> additionalViewBaseTypes,
+            ImmutableArray<ReplacementRule> namespaceReplacementRules,
+            ImmutableArray<ReplacementRule> typeNameReplacementRules,
+            bool stripGenericArityFromViewName,
+            ImmutableArray<string> interfacePrefixesToStrip)
         {
             NamespacePrefixes = namespacePrefixes;
             IncludeInternalViewModels = includeInternalViewModels;
             IncludeReferencedAssemblies = includeReferencedAssemblies;
             AdditionalViewBaseTypes = additionalViewBaseTypes;
+            NamespaceReplacementRules = namespaceReplacementRules;
+            TypeNameReplacementRules = typeNameReplacementRules;
+            StripGenericArityFromViewName = stripGenericArityFromViewName;
+            InterfacePrefixesToStrip = interfacePrefixesToStrip;
         }
 
         public ImmutableArray<string> NamespacePrefixes { get; }
         public bool IncludeInternalViewModels { get; }
         public bool IncludeReferencedAssemblies { get; }
         public ImmutableArray<string> AdditionalViewBaseTypes { get; }
+        public ImmutableArray<ReplacementRule> NamespaceReplacementRules { get; }
+        public ImmutableArray<ReplacementRule> TypeNameReplacementRules { get; }
+        public bool StripGenericArityFromViewName { get; }
+        public ImmutableArray<string> InterfacePrefixesToStrip { get; }
+    }
+
+    private readonly struct ReplacementRule
+    {
+        public ReplacementRule(string from, string to)
+        {
+            From = from;
+            To = to;
+        }
+
+        public string From { get; }
+        public string To { get; }
     }
 
     private const string AttributeText =
@@ -63,17 +91,19 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         var viewModelsProvider = context.SyntaxProvider
             .CreateSyntaxProvider(
-                static (node, _) => node is ClassDeclarationSyntax classDeclaration &&
-                                    classDeclaration.Identifier.ValueText.EndsWith(ViewModelSuffix, StringComparison.Ordinal),
+                static (node, _) =>
+                    node is TypeDeclarationSyntax typeDeclaration &&
+                    (typeDeclaration is ClassDeclarationSyntax || typeDeclaration is InterfaceDeclarationSyntax) &&
+                    typeDeclaration.Identifier.ValueText.EndsWith(ViewModelSuffix, StringComparison.Ordinal),
                 static (generatorContext, cancellationToken) =>
                 {
-                    var classDeclaration = (ClassDeclarationSyntax)generatorContext.Node;
-                    if (generatorContext.SemanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) is not { } symbol)
+                    if (generatorContext.Node is not TypeDeclarationSyntax typeDeclaration ||
+                        generatorContext.SemanticModel.GetDeclaredSymbol(typeDeclaration, cancellationToken) is not INamedTypeSymbol symbol)
                     {
                         return null;
                     }
 
-                    return symbol.IsAbstract ? null : symbol;
+                    return symbol;
                 })
             .Where(static symbol => symbol is not null)
             .Select(static (symbol, _) => symbol!)
@@ -161,12 +191,20 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         var includeInternal = GetIncludeInternalViewModels(optionsProvider);
         var includeReferencedAssemblies = GetIncludeReferencedAssemblies(optionsProvider);
         var additionalViewBaseTypes = GetAdditionalViewBaseTypes(optionsProvider);
+        var namespaceReplacementRules = GetReplacementRules(optionsProvider, NamespaceReplacementRulesProperty, new ReplacementRule("ViewModels", "Views"));
+        var typeNameReplacementRules = GetReplacementRules(optionsProvider, TypeNameReplacementRulesProperty, new ReplacementRule(ViewModelSuffix, ViewSuffix));
+        var stripGenericArityFromViewName = GetStripGenericArityFromViewName(optionsProvider);
+        var interfacePrefixesToStrip = GetInterfacePrefixesToStrip(optionsProvider);
 
         return new GeneratorOptions(
             namespacePrefixes,
             includeInternal,
             includeReferencedAssemblies,
-            additionalViewBaseTypes);
+            additionalViewBaseTypes,
+            namespaceReplacementRules,
+            typeNameReplacementRules,
+            stripGenericArityFromViewName,
+            interfacePrefixesToStrip);
     }
 
     private static ImmutableArray<string> GetNamespacePrefixes(AnalyzerConfigOptionsProvider optionsProvider)
@@ -251,9 +289,93 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         return builder.ToImmutable();
     }
 
+    private static ImmutableArray<ReplacementRule> GetReplacementRules(
+        AnalyzerConfigOptionsProvider optionsProvider,
+        string propertyName,
+        params ReplacementRule[] defaults)
+    {
+        var builder = ImmutableArray.CreateBuilder<ReplacementRule>();
+
+        if (!optionsProvider.GlobalOptions.TryGetValue(propertyName, out var rawValue) ||
+            string.IsNullOrWhiteSpace(rawValue))
+        {
+            foreach (var replacementRule in defaults)
+            {
+                builder.Add(replacementRule);
+            }
+
+            return builder.ToImmutable();
+        }
+
+        var parts = rawValue.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length == 0)
+            {
+                continue;
+            }
+
+            var separatorIndex = trimmed.IndexOf('=');
+            if (separatorIndex <= 0 || separatorIndex == trimmed.Length - 1)
+            {
+                continue;
+            }
+
+            var from = trimmed.Substring(0, separatorIndex).Trim();
+            var to = trimmed.Substring(separatorIndex + 1).Trim();
+
+            if (from.Length == 0)
+            {
+                continue;
+            }
+
+            builder.Add(new ReplacementRule(from, to));
+        }
+
+        foreach (var replacementRule in defaults)
+        {
+            builder.Add(replacementRule);
+        }
+
+        return builder.ToImmutable();
+    }
+
+    private static bool GetStripGenericArityFromViewName(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(StripGenericArityFromViewNameProperty, out var rawValue))
+        {
+            return true;
+        }
+
+        return !bool.TryParse(rawValue, out var stripGenericArityFromViewName) || stripGenericArityFromViewName;
+    }
+
+    private static ImmutableArray<string> GetInterfacePrefixesToStrip(AnalyzerConfigOptionsProvider optionsProvider)
+    {
+        if (!optionsProvider.GlobalOptions.TryGetValue(InterfacePrefixesToStripProperty, out var rawValue) ||
+            string.IsNullOrWhiteSpace(rawValue))
+        {
+            return ImmutableArray.Create("I");
+        }
+
+        var parts = rawValue.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+        var builder = ImmutableArray.CreateBuilder<string>(parts.Length);
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length > 0)
+            {
+                builder.Add(trimmed);
+            }
+        }
+
+        return builder.Count == 0 ? ImmutableArray.Create("I") : builder.ToImmutable();
+    }
+
     private static bool IsViewModelType(INamedTypeSymbol symbol)
     {
-        if (symbol.TypeKind != TypeKind.Class || symbol.IsAbstract)
+        if (symbol.TypeKind != TypeKind.Class && symbol.TypeKind != TypeKind.Interface)
         {
             return false;
         }
@@ -362,6 +484,101 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         return false;
     }
 
+    private static string ApplyReplacementRules(string input, ImmutableArray<ReplacementRule> replacementRules)
+    {
+        var value = input;
+
+        foreach (var replacementRule in replacementRules)
+        {
+            value = value.Replace(replacementRule.From, replacementRule.To);
+        }
+
+        return value;
+    }
+
+    private static string GetMetadataTypeName(INamedTypeSymbol symbol)
+    {
+        var parts = new Stack<string>();
+
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            parts.Push(current.MetadataName);
+        }
+
+        return string.Join(".", parts);
+    }
+
+    private static string GetSourceTypeName(INamedTypeSymbol symbol)
+    {
+        var parts = new Stack<string>();
+
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            parts.Push(current.Name);
+        }
+
+        return string.Join(".", parts);
+    }
+
+    private static string GetSourceTypeReference(INamedTypeSymbol symbol)
+    {
+        var parts = new Stack<string>();
+
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            var part = current.Name;
+            if (current.IsGenericType)
+            {
+                part += "<" + new string(',', current.TypeParameters.Length - 1) + ">";
+            }
+
+            parts.Push(part);
+        }
+
+        var typeName = string.Join(".", parts);
+        var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+        return string.IsNullOrEmpty(namespaceName) ? typeName : $"{namespaceName}.{typeName}";
+    }
+
+    private static string StripGenericArity(string typeName)
+    {
+        var parts = typeName.Split('.');
+
+        for (var i = 0; i < parts.Length; i++)
+        {
+            var tickIndex = parts[i].IndexOf('`');
+            if (tickIndex >= 0)
+            {
+                parts[i] = parts[i].Substring(0, tickIndex);
+            }
+        }
+
+        return string.Join(".", parts);
+    }
+
+    private static string StripInterfacePrefix(string typeName, ImmutableArray<string> interfacePrefixesToStrip)
+    {
+        foreach (var prefix in interfacePrefixesToStrip)
+        {
+            if (string.IsNullOrEmpty(prefix))
+            {
+                continue;
+            }
+
+            var parts = typeName.Split('.');
+            var last = parts[parts.Length - 1];
+            if (!last.StartsWith(prefix, StringComparison.Ordinal) || last.Length <= prefix.Length)
+            {
+                continue;
+            }
+
+            parts[parts.Length - 1] = last.Substring(prefix.Length);
+            return string.Join(".", parts);
+        }
+
+        return typeName;
+    }
+
     private static string? ProcessClass(
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
@@ -449,10 +666,32 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         foreach (var viewModelSymbol in relevantViewModels)
         {
             var namespaceNameViewModel = viewModelSymbol.ContainingNamespace.ToDisplayString();
-            var classNameViewModel = $"{namespaceNameViewModel}.{viewModelSymbol.ToDisplayString(format)}";
-            var classNameView = classNameViewModel.Replace(ViewModelSuffix, ViewSuffix);
+            var sourceTypeNameViewModel = GetSourceTypeName(viewModelSymbol);
+            var metadataTypeNameViewModel = GetMetadataTypeName(viewModelSymbol);
 
-            var viewSymbol = compilation.GetTypeByMetadataName(classNameView);
+            var sourceNamespaceView = ApplyReplacementRules(namespaceNameViewModel, options.NamespaceReplacementRules);
+            var metadataNamespaceView = ApplyReplacementRules(namespaceNameViewModel, options.NamespaceReplacementRules);
+
+            var sourceTypeNameView = ApplyReplacementRules(sourceTypeNameViewModel, options.TypeNameReplacementRules);
+            var metadataTypeNameView = ApplyReplacementRules(metadataTypeNameViewModel, options.TypeNameReplacementRules);
+
+            if (viewModelSymbol.TypeKind == TypeKind.Interface)
+            {
+                sourceTypeNameView = StripInterfacePrefix(sourceTypeNameView, options.InterfacePrefixesToStrip);
+                metadataTypeNameView = StripInterfacePrefix(metadataTypeNameView, options.InterfacePrefixesToStrip);
+            }
+
+            if (options.StripGenericArityFromViewName)
+            {
+                sourceTypeNameView = StripGenericArity(sourceTypeNameView);
+                metadataTypeNameView = StripGenericArity(metadataTypeNameView);
+            }
+
+            var classNameViewModel = GetSourceTypeReference(viewModelSymbol);
+            var classNameView = $"{sourceNamespaceView}.{sourceTypeNameView}";
+            var metadataNameView = $"{metadataNamespaceView}.{metadataTypeNameView}";
+
+            var viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
             var isSupportedView = false;
             if (viewSymbol is not null && viewBaseTypes.Count > 0)
             {
@@ -468,13 +707,71 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
             if (viewSymbol is null || !isSupportedView)
             {
-                source.AppendLine(
-                    $"\t\t[typeof({classNameViewModel})] = () => new TextBlock() {{ Text = \"Not Found: {classNameView}\" }},");
+                continue;
             }
-            else
+
+            if (viewSymbol.IsGenericType)
             {
-                source.AppendLine($"\t\t[typeof({classNameViewModel})] = () => new {classNameView}(),");
+                continue;
             }
+
+            source.AppendLine($"\t\t[typeof({classNameViewModel})] = () => new {classNameView}(),");
+        }
+
+        source.AppendLine("\t};");
+        source.AppendLine();
+        source.AppendLine("\tprivate static Dictionary<Type, string> s_missingViews = new()");
+        source.AppendLine("\t{");
+
+        foreach (var viewModelSymbol in relevantViewModels)
+        {
+            var namespaceNameViewModel = viewModelSymbol.ContainingNamespace.ToDisplayString();
+            var sourceTypeNameViewModel = GetSourceTypeName(viewModelSymbol);
+            var metadataTypeNameViewModel = GetMetadataTypeName(viewModelSymbol);
+
+            var sourceNamespaceView = ApplyReplacementRules(namespaceNameViewModel, options.NamespaceReplacementRules);
+            var metadataNamespaceView = ApplyReplacementRules(namespaceNameViewModel, options.NamespaceReplacementRules);
+
+            var sourceTypeNameView = ApplyReplacementRules(sourceTypeNameViewModel, options.TypeNameReplacementRules);
+            var metadataTypeNameView = ApplyReplacementRules(metadataTypeNameViewModel, options.TypeNameReplacementRules);
+
+            if (viewModelSymbol.TypeKind == TypeKind.Interface)
+            {
+                sourceTypeNameView = StripInterfacePrefix(sourceTypeNameView, options.InterfacePrefixesToStrip);
+                metadataTypeNameView = StripInterfacePrefix(metadataTypeNameView, options.InterfacePrefixesToStrip);
+            }
+
+            if (options.StripGenericArityFromViewName)
+            {
+                sourceTypeNameView = StripGenericArity(sourceTypeNameView);
+                metadataTypeNameView = StripGenericArity(metadataTypeNameView);
+            }
+
+            var classNameViewModel = GetSourceTypeReference(viewModelSymbol);
+            var classNameView = $"{sourceNamespaceView}.{sourceTypeNameView}";
+            var metadataNameView = $"{metadataNamespaceView}.{metadataTypeNameView}";
+
+            var viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
+            var isSupportedView = false;
+            if (viewSymbol is not null && viewBaseTypes.Count > 0)
+            {
+                for (var current = viewSymbol; current is not null; current = current.BaseType)
+                {
+                    if (viewBaseTypes.Contains(current))
+                    {
+                        isSupportedView = true;
+                        break;
+                    }
+                }
+            }
+
+            if (viewSymbol is not null && isSupportedView)
+            {
+                continue;
+            }
+
+            source.AppendLine(
+                $"\t\t[typeof({classNameViewModel})] = \"Not Found: {classNameView}\",");
         }
 
         source.AppendLine("\t};");
@@ -492,10 +789,17 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 		}
 
 		var type = data.GetType();
+		var func = TryGetFactory(type) ?? TryGetFactoryFromInterfaces(type);
 
-		if (s_views.TryGetValue(type, out var func))
+		if (func is not null)
 		{
 			return func.Invoke();
+		}
+
+		var missingView = TryGetMissingView(type) ?? TryGetMissingViewFromInterfaces(type);
+		if (missingView is not null)
+		{
+			return new TextBlock { Text = missingView };
 		}
 
 		throw new Exception($"Unable to create view for type: {type}");
@@ -503,6 +807,129 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
 """);
         }
+
+        source.Append(
+            """
+
+	private static Func<Control>? TryGetFactory(Type? type)
+	{
+		if (type is null)
+		{
+			return null;
+		}
+
+		if (TryGetFactoryForType(type, out var func))
+		{
+			return func;
+		}
+
+		for (var current = type.BaseType; current is not null; current = current.BaseType)
+		{
+			if (TryGetFactoryForType(current, out func))
+			{
+				return func;
+			}
+		}
+
+		return null;
+	}
+
+	private static Func<Control>? TryGetFactoryFromInterfaces(Type type)
+	{
+		var interfaces = type.GetInterfaces();
+		for (var index = interfaces.Length - 1; index >= 0; index--)
+		{
+			var interfaceType = interfaces[index];
+			if (!interfaceType.Name.EndsWith("ViewModel", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (TryGetFactoryForType(interfaceType, out var func))
+			{
+				return func;
+			}
+		}
+
+		return null;
+	}
+
+	private static bool TryGetFactoryForType(Type type, out Func<Control>? func)
+	{
+		if (s_views.TryGetValue(type, out func))
+		{
+			return true;
+		}
+
+		if (type.IsGenericType && s_views.TryGetValue(type.GetGenericTypeDefinition(), out func))
+		{
+			return true;
+		}
+
+		func = null;
+		return false;
+	}
+
+	private static string? TryGetMissingView(Type? type)
+	{
+		if (type is null)
+		{
+			return null;
+		}
+
+		if (TryGetMissingViewForType(type, out var missingView))
+		{
+			return missingView;
+		}
+
+		for (var current = type.BaseType; current is not null; current = current.BaseType)
+		{
+			if (TryGetMissingViewForType(current, out missingView))
+			{
+				return missingView;
+			}
+		}
+
+		return null;
+	}
+
+	private static string? TryGetMissingViewFromInterfaces(Type type)
+	{
+		var interfaces = type.GetInterfaces();
+		for (var index = interfaces.Length - 1; index >= 0; index--)
+		{
+			var interfaceType = interfaces[index];
+			if (!interfaceType.Name.EndsWith("ViewModel", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (TryGetMissingViewForType(interfaceType, out var missingView))
+			{
+				return missingView;
+			}
+		}
+
+		return null;
+	}
+
+	private static bool TryGetMissingViewForType(Type type, out string? missingView)
+	{
+		if (s_missingViews.TryGetValue(type, out missingView))
+		{
+			return true;
+		}
+
+		if (type.IsGenericType && s_missingViews.TryGetValue(type.GetGenericTypeDefinition(), out missingView))
+		{
+			return true;
+		}
+
+		missingView = null;
+		return false;
+	}
+
+""");
 
         source.AppendLine("}");
 
