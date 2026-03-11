@@ -15,6 +15,43 @@ namespace StaticViewLocator.Tests.TestHelpers;
 
 internal static class StaticViewLocatorGeneratorVerifier
 {
+    public static Task<IReadOnlyDictionary<string, string>> GetGeneratedSourcesAsync(
+        string source,
+        IReadOnlyDictionary<string, string>? globalOptions = null)
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
+
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "StaticViewLocatorGenerator.Tests",
+            syntaxTrees: new[] { syntaxTree },
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        var generator = new StaticViewLocatorGenerator().AsSourceGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators: new[] { generator },
+            additionalTexts: null,
+            parseOptions: parseOptions,
+            optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions));
+
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out var diagnostics);
+
+        var failures = diagnostics.Where(static d => d.Severity == DiagnosticSeverity.Error).ToArray();
+        if (failures.Length > 0)
+        {
+            var message = string.Join(Environment.NewLine, failures.Select(static d => d.ToString()));
+            throw new Xunit.Sdk.XunitException($"Generator reported diagnostics:{Environment.NewLine}{message}");
+        }
+
+        var runResult = driver.GetRunResult();
+        var generated = runResult.GeneratedTrees
+            .Select(static tree => (HintName: Path.GetFileName(tree.FilePath) ?? string.Empty, Source: tree.GetText().ToString()))
+            .ToDictionary(static x => x.HintName, static x => x.Source, StringComparer.Ordinal);
+
+        return Task.FromResult<IReadOnlyDictionary<string, string>>(generated);
+    }
+
     public static Task VerifyGeneratedSourcesAsync(string source, params (string hintName, string source)[] generatedSources)
     {
         return VerifyGeneratedSourcesAsync(source, globalOptions: null, generatedSources);

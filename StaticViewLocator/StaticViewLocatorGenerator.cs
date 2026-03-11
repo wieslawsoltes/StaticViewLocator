@@ -710,6 +710,11 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 continue;
             }
 
+            if (viewSymbol.IsGenericType)
+            {
+                continue;
+            }
+
             source.AppendLine($"\t\t[typeof({classNameViewModel})] = () => new {classNameView}(),");
         }
 
@@ -799,6 +804,12 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
 		throw new Exception($"Unable to create view for type: {type}");
 	}
+
+""");
+        }
+
+        source.Append(
+            """
 
 	private static Func<Control>? TryGetFactory(Type? type)
 	{
@@ -919,7 +930,6 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 	}
 
 """);
-        }
 
         source.AppendLine("}");
 

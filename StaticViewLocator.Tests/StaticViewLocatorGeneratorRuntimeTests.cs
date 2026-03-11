@@ -317,6 +317,75 @@ namespace TestApp.Views
     }
 
     [AvaloniaFact]
+    public async Task CustomBuildCanCallGeneratedHelpers()
+    {
+        const string source = @"
+using System;
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator
+    {
+        public Control? Build(object? data)
+        {
+            if (data is null)
+            {
+                return null;
+            }
+
+            var type = data.GetType();
+            var factory = TryGetFactory(type) ?? TryGetFactoryFromInterfaces(type);
+            return factory?.Invoke();
+        }
+    }
+}
+
+namespace TestApp.ViewModels
+{
+    public class SampleViewModel
+    {
+    }
+}
+
+namespace TestApp.Views
+{
+    public class SampleView : UserControl
+    {
+    }
+}
+";
+
+        var compilation = await CreateCompilationAsync(source);
+        var sourceGenerator = new StaticViewLocatorGenerator().AsSourceGenerator();
+        var driver = CSharpGeneratorDriver.Create(new[] { sourceGenerator }, parseOptions: (CSharpParseOptions)compilation.SyntaxTrees.First().Options);
+        driver.RunGeneratorsAndUpdateCompilation(compilation, out var updatedCompilation, out var diagnostics);
+
+        Assert.Empty(diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        using var peStream = new MemoryStream();
+        var emitResult = updatedCompilation.Emit(peStream);
+        Assert.True(emitResult.Success, string.Join(Environment.NewLine, emitResult.Diagnostics));
+
+        peStream.Seek(0, SeekOrigin.Begin);
+        var assembly = Assembly.Load(peStream.ToArray());
+
+        var locatorType = assembly.GetType("TestApp.ViewLocator") ?? throw new InvalidOperationException("Generated locator type not found.");
+        var buildMethod = locatorType.GetMethod("Build", BindingFlags.Public | BindingFlags.Instance) ?? throw new InvalidOperationException("Build method not found.");
+        var sampleViewModel = CreateInstance(assembly, "TestApp.ViewModels.SampleViewModel");
+        var locator = Activator.CreateInstance(locatorType) ?? throw new InvalidOperationException("Unable to instantiate generated locator.");
+
+        _ = HeadlessUnitTestSession.GetOrStartForAssembly(typeof(StaticViewLocatorGeneratorRuntimeTests).Assembly);
+
+        var control = (Control?)buildMethod.Invoke(locator, new[] { sampleViewModel });
+
+        Assert.NotNull(control);
+        Assert.Equal("TestApp.Views.SampleView", control!.GetType().FullName);
+    }
+
+    [AvaloniaFact]
     public async Task ResolvesInterfaceMappingsByStrippingConfiguredPrefix()
     {
         const string source = @"

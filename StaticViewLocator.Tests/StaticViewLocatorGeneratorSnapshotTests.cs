@@ -701,6 +701,124 @@ public partial class ViewLocator
 	private static Dictionary<Type, string> s_missingViews = new()
 	{
 	};
+
+	private static Func<Control>? TryGetFactory(Type? type)
+	{
+		if (type is null)
+		{
+			return null;
+		}
+
+		if (TryGetFactoryForType(type, out var func))
+		{
+			return func;
+		}
+
+		for (var current = type.BaseType; current is not null; current = current.BaseType)
+		{
+			if (TryGetFactoryForType(current, out func))
+			{
+				return func;
+			}
+		}
+
+		return null;
+	}
+
+	private static Func<Control>? TryGetFactoryFromInterfaces(Type type)
+	{
+		var interfaces = type.GetInterfaces();
+		for (var index = interfaces.Length - 1; index >= 0; index--)
+		{
+			var interfaceType = interfaces[index];
+			if (!interfaceType.Name.EndsWith("ViewModel", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (TryGetFactoryForType(interfaceType, out var func))
+			{
+				return func;
+			}
+		}
+
+		return null;
+	}
+
+	private static bool TryGetFactoryForType(Type type, out Func<Control>? func)
+	{
+		if (s_views.TryGetValue(type, out func))
+		{
+			return true;
+		}
+
+		if (type.IsGenericType && s_views.TryGetValue(type.GetGenericTypeDefinition(), out func))
+		{
+			return true;
+		}
+
+		func = null;
+		return false;
+	}
+
+	private static string? TryGetMissingView(Type? type)
+	{
+		if (type is null)
+		{
+			return null;
+		}
+
+		if (TryGetMissingViewForType(type, out var missingView))
+		{
+			return missingView;
+		}
+
+		for (var current = type.BaseType; current is not null; current = current.BaseType)
+		{
+			if (TryGetMissingViewForType(current, out missingView))
+			{
+				return missingView;
+			}
+		}
+
+		return null;
+	}
+
+	private static string? TryGetMissingViewFromInterfaces(Type type)
+	{
+		var interfaces = type.GetInterfaces();
+		for (var index = interfaces.Length - 1; index >= 0; index--)
+		{
+			var interfaceType = interfaces[index];
+			if (!interfaceType.Name.EndsWith("ViewModel", StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			if (TryGetMissingViewForType(interfaceType, out var missingView))
+			{
+				return missingView;
+			}
+		}
+
+		return null;
+	}
+
+	private static bool TryGetMissingViewForType(Type type, out string? missingView)
+	{
+		if (s_missingViews.TryGetValue(type, out missingView))
+		{
+			return true;
+		}
+
+		if (type.IsGenericType && s_missingViews.TryGetValue(type.GetGenericTypeDefinition(), out missingView))
+		{
+			return true;
+		}
+
+		missingView = null;
+		return false;
+	}
 }
 
 """;
@@ -1146,5 +1264,50 @@ public partial class ViewLocator
             },
             ("StaticViewLocatorAttribute.cs", expectedAttribute),
             ("ViewLocator_StaticViewLocator.cs", expectedLocator));
+    }
+
+    [Fact]
+    public async Task DoesNotGenerateInvalidFactoryForOpenGenericView()
+    {
+        const string input = @"
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.ViewModels
+{
+    public class WidgetViewModel<T>
+    {
+    }
+}
+
+namespace TestApp.Views
+{
+    public class WidgetView<T> : UserControl
+    {
+    }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator
+    {
+    }
+}
+";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(
+            input,
+            new Dictionary<string, string>
+            {
+                ["build_property.StaticViewLocatorNamespaceReplacementRules"] = "ViewModels=Views",
+                ["build_property.StaticViewLocatorTypeNameReplacementRules"] = "ViewModel=View",
+                ["build_property.StaticViewLocatorStripGenericArityFromViewName"] = "false",
+            });
+
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.DoesNotContain("new TestApp.Views.WidgetView()", locatorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("[typeof(TestApp.ViewModels.WidgetViewModel<>)] = () =>", locatorSource, StringComparison.Ordinal);
     }
 }
