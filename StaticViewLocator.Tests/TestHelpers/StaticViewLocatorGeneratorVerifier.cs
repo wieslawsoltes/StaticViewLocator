@@ -15,6 +15,23 @@ namespace StaticViewLocator.Tests.TestHelpers;
 
 internal static class StaticViewLocatorGeneratorVerifier
 {
+    public static Task<IReadOnlyList<Diagnostic>> GetGeneratorDiagnosticsAsync(string source)
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "StaticViewLocatorGenerator.Tests",
+            syntaxTrees: new[] { CSharpSyntaxTree.ParseText(source, parseOptions) },
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators: new[] { new StaticViewLocatorGenerator().AsSourceGenerator() },
+            parseOptions: parseOptions);
+
+        driver = driver.RunGenerators(compilation);
+        return Task.FromResult<IReadOnlyList<Diagnostic>>(
+            driver.GetRunResult().Diagnostics.ToArray());
+    }
+
     public static Task<IReadOnlyDictionary<string, string>> GetGeneratedSourcesAsync(
         string source,
         IReadOnlyDictionary<string, string>? globalOptions = null)

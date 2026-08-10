@@ -100,7 +100,8 @@ Contract discovery has these constraints:
 - discovered views must be concrete, non-generic types from the current compilation;
 - discovered views must derive from `UserControl`, `Window`, or a type configured through `StaticViewLocatorAdditionalViewBaseTypes`;
 - contract discovery happens at compile time and adds no runtime assembly scanning;
-- ambiguous view-model mappings should be resolved with an explicit `[StaticViewMapping]` override.
+- invalid contracts produce the `SVL001` warning and are ignored;
+- ambiguous view-model mappings produce the `SVL002` warning and should be resolved with an explicit `[StaticViewMapping]` override.
 
 Mapping sources are applied in this order, from highest to lowest priority:
 

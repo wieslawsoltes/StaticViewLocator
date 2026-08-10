@@ -8,6 +8,75 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorSnapshotTests
 {
     [Fact]
+    public async Task ReportsAmbiguousContractMappings()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp;
+
+public sealed class DashboardModel { }
+public interface IViewFor<T> { }
+public sealed class FirstView : UserControl, IViewFor<DashboardModel> { }
+public sealed class SecondView : UserControl, IViewFor<DashboardModel> { }
+
+[StaticViewLocator(ViewModelMappingContracts = new[] { typeof(IViewFor<>) })]
+public partial class ViewLocator { }
+""";
+
+        var diagnostics = await StaticViewLocatorGeneratorVerifier.GetGeneratorDiagnosticsAsync(input);
+
+        var diagnostic = Assert.Single(diagnostics, item => item.Id == "SVL002");
+        Assert.Contains("TestApp.DashboardModel", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Contains("StaticViewMappingAttribute", diagnostic.GetMessage(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExplicitMappingSuppressesAmbiguousContractDiagnostic()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp;
+
+public sealed class DashboardModel { }
+public interface IViewFor<T> { }
+public sealed class FirstView : UserControl, IViewFor<DashboardModel> { }
+public sealed class SecondView : UserControl, IViewFor<DashboardModel> { }
+
+[StaticViewLocator(ViewModelMappingContracts = new[] { typeof(IViewFor<>) })]
+[StaticViewMapping(typeof(DashboardModel), typeof(FirstView))]
+public partial class ViewLocator { }
+""";
+
+        var diagnostics = await StaticViewLocatorGeneratorVerifier.GetGeneratorDiagnosticsAsync(input);
+
+        Assert.DoesNotContain(diagnostics, item => item.Id == "SVL002");
+    }
+
+    [Fact]
+    public async Task ReportsInvalidMappingContract()
+    {
+        const string input = """
+using StaticViewLocator;
+
+namespace TestApp;
+
+public interface IInvalidContract { }
+
+[StaticViewLocator(ViewModelMappingContracts = new[] { typeof(IInvalidContract) })]
+public partial class ViewLocator { }
+""";
+
+        var diagnostics = await StaticViewLocatorGeneratorVerifier.GetGeneratorDiagnosticsAsync(input);
+
+        var diagnostic = Assert.Single(diagnostics, item => item.Id == "SVL001");
+        Assert.Contains("TestApp.IInvalidContract", diagnostic.GetMessage(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InfersMappingFromConfiguredGenericContractAndGeneratesFactoryMethod()
     {
         const string input = """

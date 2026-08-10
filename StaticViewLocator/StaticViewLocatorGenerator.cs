@@ -14,6 +14,22 @@ namespace StaticViewLocator;
 [Generator(LanguageNames.CSharp)]
 public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 {
+    private static readonly DiagnosticDescriptor InvalidMappingContract = new(
+        id: "SVL001",
+        title: "Invalid view-model mapping contract",
+        messageFormat: "Mapping contract '{0}' must be an open generic interface or class with exactly one type parameter",
+        category: "StaticViewLocator",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
+    private static readonly DiagnosticDescriptor AmbiguousContractMapping = new(
+        id: "SVL002",
+        title: "Ambiguous contract-based view mapping",
+        messageFormat: "View model '{0}' is associated with multiple views ('{1}' and '{2}'); '{2}' was selected. Add StaticViewMappingAttribute to select a view explicitly",
+        category: "StaticViewLocator",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
     private const string StaticViewLocatorAttributeDisplayString = "StaticViewLocator.StaticViewLocatorAttribute";
     private const string StaticViewMappingAttributeDisplayString = "StaticViewLocator.StaticViewMappingAttribute";
     private const string ViewModelSuffix = "ViewModel";
@@ -157,7 +173,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         {
             var (((locatorSymbol, compilation), viewModelSymbols), options) = tuple;
 
-            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, options);
+            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, options, sourceProductionContext);
             if (classSource is not null)
             {
                 sourceProductionContext.AddSource(
@@ -603,7 +619,8 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
         ImmutableArray<INamedTypeSymbol> viewModelSymbols,
-        GeneratorOptions options)
+        GeneratorOptions options,
+        SourceProductionContext context)
     {
         if (!locatorSymbol.ContainingSymbol.Equals(locatorSymbol.ContainingNamespace, SymbolEqualityComparer.Default))
         {
@@ -627,8 +644,13 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         var relevantViewModels = new List<INamedTypeSymbol>();
         var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var viewBaseTypes = GetViewBaseTypes(compilation, options);
-        var inferredMappings = GetInferredMappings(compilation, locatorSymbol, viewBaseTypes);
         var explicitMappings = GetExplicitMappings(locatorSymbol);
+        var inferredMappings = GetInferredMappings(
+            compilation,
+            locatorSymbol,
+            viewBaseTypes,
+            explicitMappings.Keys,
+            context);
 
         foreach (var mapping in explicitMappings)
         {
@@ -1014,9 +1036,11 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private static Dictionary<INamedTypeSymbol, INamedTypeSymbol> GetInferredMappings(
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
-        HashSet<INamedTypeSymbol> viewBaseTypes)
+        HashSet<INamedTypeSymbol> viewBaseTypes,
+        ICollection<INamedTypeSymbol> explicitlyMappedViewModels,
+        SourceProductionContext context)
     {
-        var contracts = GetViewModelMappingContracts(locatorSymbol);
+        var contracts = GetViewModelMappingContracts(locatorSymbol, context);
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
         if (contracts.Count == 0)
         {
@@ -1036,13 +1060,26 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 continue;
             }
 
+            if (mappings.TryGetValue(viewModelType, out var previousView) &&
+                !explicitlyMappedViewModels.Contains(viewModelType, SymbolEqualityComparer.Default))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    AmbiguousContractMapping,
+                    locatorSymbol.Locations.FirstOrDefault(),
+                    viewModelType.ToDisplayString(),
+                    previousView.ToDisplayString(),
+                    viewType.ToDisplayString()));
+            }
+
             mappings[viewModelType] = viewType;
         }
 
         return mappings;
     }
 
-    private static HashSet<INamedTypeSymbol> GetViewModelMappingContracts(INamedTypeSymbol locatorSymbol)
+    private static HashSet<INamedTypeSymbol> GetViewModelMappingContracts(
+        INamedTypeSymbol locatorSymbol,
+        SourceProductionContext context)
     {
         var contracts = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var locatorAttribute = locatorSymbol.GetAttributes()
@@ -1061,10 +1098,23 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
             foreach (var value in argument.Value.Values)
             {
-                if (value.Value is INamedTypeSymbol contract && contract.Arity == 1)
+                if (value.Value is not INamedTypeSymbol contract)
+                {
+                    continue;
+                }
+
+                if (contract.Arity == 1 &&
+                    (contract.TypeKind == TypeKind.Interface || contract.TypeKind == TypeKind.Class) &&
+                    contract.IsUnboundGenericType)
                 {
                     contracts.Add(contract.OriginalDefinition);
+                    continue;
                 }
+
+                context.ReportDiagnostic(Diagnostic.Create(
+                    InvalidMappingContract,
+                    locatorSymbol.Locations.FirstOrDefault(),
+                    contract.ToDisplayString()));
             }
         }
 
