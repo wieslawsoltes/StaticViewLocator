@@ -1018,6 +1018,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     {
         var contracts = GetViewModelMappingContracts(locatorSymbol);
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var ambiguousViewModels = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         if (contracts.Count == 0)
         {
             return mappings;
@@ -1036,7 +1037,19 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 continue;
             }
 
-            mappings[viewModelType] = viewType;
+            if (ambiguousViewModels.Contains(viewModelType))
+            {
+                continue;
+            }
+
+            if (mappings.ContainsKey(viewModelType))
+            {
+                mappings.Remove(viewModelType);
+                ambiguousViewModels.Add(viewModelType);
+                continue;
+            }
+
+            mappings.Add(viewModelType, viewType);
         }
 
         return mappings;

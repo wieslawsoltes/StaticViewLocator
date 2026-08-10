@@ -117,6 +117,56 @@ namespace TestApp
     }
 
     [Fact]
+    public async Task DoesNotChooseAnArbitraryViewForAmbiguousContractMappings()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.Models
+{
+    public sealed class DashboardModel
+    {
+    }
+}
+
+namespace TestApp.Framework
+{
+    public interface IViewFor<TViewModel>
+    {
+    }
+}
+
+namespace TestApp.Screens
+{
+    public sealed class DashboardScreen : UserControl, Framework.IViewFor<Models.DashboardModel>
+    {
+    }
+
+    public sealed class AlternateDashboardScreen : UserControl, Framework.IViewFor<Models.DashboardModel>
+    {
+    }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator(
+        ViewModelMappingContracts = new[] { typeof(Framework.IViewFor<>) })]
+    public partial class ViewLocator
+    {
+    }
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(input);
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.DoesNotContain("typeof(TestApp.Models.DashboardModel)", locatorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("new TestApp.Screens.DashboardScreen()", locatorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("new TestApp.Screens.AlternateDashboardScreen()", locatorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GeneratesAttributeAndLocatorSources()
     {
         const string input = @"
