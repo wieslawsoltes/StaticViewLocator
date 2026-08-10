@@ -715,7 +715,9 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             {
                 viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
             }
-            var isSupportedView = viewSymbol is not null && IsSupportedView(viewSymbol, viewBaseTypes);
+            var isSupportedView = viewSymbol is not null &&
+                                  IsSupportedView(viewSymbol, viewBaseTypes) &&
+                                  CanInstantiateView(compilation, viewSymbol, locatorSymbol);
 
             if (viewSymbol is null || !isSupportedView)
             {
@@ -773,7 +775,9 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             {
                 viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
             }
-            var isSupportedView = viewSymbol is not null && IsSupportedView(viewSymbol, viewBaseTypes);
+            var isSupportedView = viewSymbol is not null &&
+                                  IsSupportedView(viewSymbol, viewBaseTypes) &&
+                                  CanInstantiateView(compilation, viewSymbol, locatorSymbol);
 
             if (viewSymbol is not null && isSupportedView)
             {
@@ -1149,6 +1153,22 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         return false;
+    }
+
+    private static bool CanInstantiateView(
+        Compilation compilation,
+        INamedTypeSymbol viewSymbol,
+        INamedTypeSymbol locatorSymbol)
+    {
+        if (viewSymbol.IsAbstract || viewSymbol.IsGenericType)
+        {
+            return false;
+        }
+
+        return viewSymbol.InstanceConstructors.Any(constructor =>
+            constructor.Parameters.Length == 0 &&
+            constructor.DeclaredAccessibility != Accessibility.Private &&
+            compilation.IsSymbolAccessibleWithin(constructor, locatorSymbol));
     }
 
     private static bool ShouldGenerateViewFactoryMethods(INamedTypeSymbol locatorSymbol)

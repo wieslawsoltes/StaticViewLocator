@@ -8,6 +8,49 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorSnapshotTests
 {
     [Fact]
+    public async Task DoesNotGenerateFactoryForViewWithoutAccessibleParameterlessConstructor()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.ViewModels
+{
+    public sealed class DashboardViewModel
+    {
+    }
+}
+
+namespace TestApp.Views
+{
+    public sealed class DashboardView : UserControl
+    {
+        public DashboardView(string title)
+        {
+        }
+    }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator
+    {
+    }
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(input);
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.DoesNotContain("new TestApp.Views.DashboardView()", locatorSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "[typeof(TestApp.ViewModels.DashboardViewModel)] = \"Not Found: TestApp.Views.DashboardView\"",
+            locatorSource,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InfersMappingFromConfiguredGenericContractAndGeneratesFactoryMethod()
     {
         const string input = """
