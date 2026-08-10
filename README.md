@@ -106,7 +106,8 @@ Mapping sources are applied in this order, from highest to lowest priority:
 
 1. `[StaticViewMapping]` explicit override
 2. `ViewModelMappingContracts` inference
-3. configured namespace and type-name conventions
+3. automatic `ReactiveUI.IViewFor<TViewModel>` inference when `GenerateIViewLocator = true`
+4. configured namespace and type-name conventions
 
 ### Exact factory generation
 
@@ -118,91 +119,82 @@ private static bool TryCreateViewExact(Type viewModelType, out Control? view)
 
 It performs only an exact dictionary lookup and invokes the statically generated constructor delegate. It does not walk base types or interfaces and does not construct closed generic types at runtime. This is useful when an MVVM framework needs to create a view and then apply its own view-model assignment or lifecycle rules.
 
-When a locator supplies its own `Build` method, set `GenerateRuntimeTypeFallbackMethods = false` to omit the legacy `BaseType`, `GetInterfaces()`, and generic-type-definition fallback helpers. If the generator must emit `Build`, those helpers are always emitted because the generated implementation depends on them.
+If the annotated partial class already declares a compatible `TryCreateViewExact(Type, out Control?)`, the generator reuses it instead of emitting a duplicate helper.
 
-### ReactiveUI `IViewLocator`
+When a locator supplies its own `Build` method, set `GenerateRuntimeTypeFallbackMethods = false` to omit the legacy `BaseType`, `GetInterfaces()`, and generic-type-definition fallback helpers. If the generator must emit the legacy `Build`, those helpers are always emitted because that implementation depends on them. The generated `IDataTemplate.Build` path uses exact static lookup and does not emit these runtime type-walking helpers unless a source-declared `Build(object?)` requires them and the option remains enabled.
 
-ReactiveUI 24 exposes generic AOT-friendly `ResolveView<TViewModel>` overloads as well as runtime-instance overloads. Configure `IViewFor<>` as the mapping contract and use the exact factory for all four methods:
+### Generated ReactiveUI `IViewLocator` and Avalonia `IDataTemplate`
+
+The generator can optionally generate the complete ReactiveUI `IViewLocator` and Avalonia `IDataTemplate` adapter. This removes the manual `Build`, `Match`, and four `ResolveView` methods from the locator class.
 
 ```csharp
-using Avalonia.Controls;
-using Avalonia.Controls.Templates;
 using ReactiveUI;
 using StaticViewLocator;
 
 [StaticViewLocator(
+    GenerateIViewLocator = true,
+    GenerateIDataTemplate = true,
     GenerateRuntimeTypeFallbackMethods = false,
-    GenerateViewFactoryMethods = true,
-    ViewModelMappingContracts = new[] { typeof(IViewFor<>) })]
-public partial class ViewLocator : IDataTemplate, IViewLocator
+    DataTemplateMatchTypes = new[] { typeof(ViewModelBase), typeof(IDockable) })]
+public partial class ViewLocator
 {
-    public Control? Build(object? data)
-    {
-        return ResolveView(data) as Control;
-    }
+}
+```
 
-    public bool Match(object? data)
-    {
-        return data is ViewModelBase;
-    }
+`GenerateIViewLocator = true` requires the consumer project to reference ReactiveUI. It automatically discovers concrete Avalonia views implementing `ReactiveUI.IViewFor<TViewModel>`, so `ViewModelMappingContracts = new[] { typeof(IViewFor<>) }` and `GenerateViewFactoryMethods = true` are not required for this mode. User-configured `ViewModelMappingContracts` take precedence over this automatic ReactiveUI inference, while `[StaticViewMapping]` remains the final override. The generated locator implements all four current ReactiveUI resolution overloads. Runtime-instance resolution assigns `IViewFor.ViewModel`; non-null contracts return `null` because the generated map is currently unkeyed.
 
-    public IViewFor<TViewModel>? ResolveView<TViewModel>()
-        where TViewModel : class
-    {
-        return ResolveView<TViewModel>(null);
-    }
+`GenerateIDataTemplate = true` adds `IDataTemplate`, `Build(object?)`, and `Match(object?)`. `DataTemplateMatchTypes` provides a fast application-specific match predicate. If it is empty, the generated `Match` checks the statically generated view and missing-view maps using the same exact-type semantics as generated `Build`.
 
-    public IViewFor<TViewModel>? ResolveView<TViewModel>(string? contract)
-        where TViewModel : class
+The generated `Build` pipeline is:
+
+1. `BuildInvalidView(param)` for `null` input.
+2. `BuildResolvedView(param)` for the normal statically mapped view.
+3. `BuildFallbackView(param)` for application-specific fallback cases.
+4. `BuildMissingView(param, viewModelType)` for the final not-found control.
+
+For non-sealed locator classes, default hook implementations are generated as `protected virtual`, allowing normal subclass overrides. For sealed locator classes the generated defaults are `private`, because virtual members are illegal on sealed types. In both cases, a hook with the corresponding by-value `object?`-based signature declared directly in the annotated partial class suppresses generation of that default hook; unrelated or `ref`/`in`/`out` overloads do not suppress it. This allows application-specific behavior without replacing the public generated `Build` method. For example, a Dock-style context fallback can be implemented as:
+
+```csharp
+[StaticViewLocator(
+    GenerateIViewLocator = true,
+    GenerateIDataTemplate = true,
+    GenerateRuntimeTypeFallbackMethods = false,
+    DataTemplateMatchTypes = new[] { typeof(ViewModelBase), typeof(IDockable) })]
+public partial class ViewLocator
+{
+    protected virtual Control? BuildFallbackView(object? param)
     {
-        if (contract is not null || !TryCreateViewExact(typeof(TViewModel), out var control))
+        if (param is not IDockable { Context: ViewModelBase })
         {
             return null;
         }
 
-        return control as IViewFor<TViewModel>;
-    }
-
-    public IViewFor? ResolveView(object? instance)
-    {
-        return ResolveView(instance, null);
-    }
-
-    public IViewFor? ResolveView(object? instance, string? contract)
-    {
-        if (instance is null ||
-            contract is not null ||
-            !TryCreateViewExact(instance.GetType(), out var control))
+        var contentControl = new ContentControl
         {
-            return null;
-        }
-
-        var view = control as IViewFor;
-        if (view is not null)
-        {
-            view.ViewModel = instance;
-        }
-
-        return view;
+            DataContext = param,
+        };
+        contentControl.Bind(
+            ContentControl.ContentProperty,
+            new Binding(nameof(IDockable.Context)));
+        return contentControl;
     }
 }
 ```
 
-Replace `ViewModelBase` in `Match` with the application's view-model root type or another fast predicate. Non-null contracts return `null` in this example because the generated map is unkeyed. Register the locator as the application's ReactiveUI locator after ReactiveUI initialization, using the dependency-injection container selected by the application. For example, with Microsoft.Extensions.DependencyInjection:
+The generator assembly itself does not reference ReactiveUI. ReactiveUI types are referenced only in generated consumer source when `GenerateIViewLocator` is enabled.
 
-```csharp
-services.AddSingleton<ReactiveUI.IViewLocator, ViewLocator>();
-```
-
-The generator itself does not reference ReactiveUI. `ViewModelMappingContracts` and the exact factory are framework-neutral, so the same pattern can support another MVVM framework's generic view contract.
+A complete Avalonia + ReactiveUI example is available in `StaticViewLocatorReactiveUIDemo`. It displays the same navigation state through two side-by-side paths: an Avalonia `ContentControl` using the generated `IDataTemplate`, and a ReactiveUI `ViewModelViewHost` whose `ViewLocator` is the generated locator. The sample also demonstrates the context-wrapper fallback without runtime view scanning.
 
 ### Attribute options
 
 | Option | Default | Behavior |
 | --- | --- | --- |
-| `GenerateViewFactoryMethods` | `false` | Emits `TryCreateViewExact(Type, out Control?)` for framework adapters and custom locators. |
-| `GenerateRuntimeTypeFallbackMethods` | `true` | Emits base/interface/open-generic runtime fallback helpers for custom `Build` implementations. It cannot disable helpers required by a generator-provided `Build`. |
+| `GenerateViewFactoryMethods` | `false` | Emits `TryCreateViewExact(Type, out Control?)` for framework adapters and custom locators unless a compatible source helper already exists. |
+| `GenerateRuntimeTypeFallbackMethods` | `true` | Emits base/interface/open-generic runtime fallback helpers when a legacy or source-declared `Build` path needs them; generated `IDataTemplate.Build` does not require them. |
+| `GenerateIViewLocator` | `false` | Generates ReactiveUI `IViewLocator`, all four `ResolveView` overloads, and automatic `IViewFor<TViewModel>` compile-time mappings. Requires a ReactiveUI reference in the consumer project. |
+| `GenerateIDataTemplate` | `false` | Generates Avalonia `IDataTemplate`, `Build`, `Match`, and customizable build hooks. |
 | `ViewModelMappingContracts` | empty | Infers mappings from configured open generic contracts with one type parameter. |
+| `DataTemplateMatchTypes` | empty | Types accepted by generated `Match`; when empty, generated maps are checked using exact runtime type. |
 
 `[StaticViewMapping(typeof(TViewModel), typeof(TView))]` is repeatable and is the final override for a mapped view model. It also admits model types whose names do not end in `ViewModel`.
 
@@ -210,13 +202,17 @@ The generator emits:
 - `s_views`: resolved mappings from `Type` to `Func<Control>`
 - `s_missingViews`: unresolved mappings used for `"Not Found: ..."` fallback text
 - optional exact factory creation through `TryCreateViewExact`
-- runtime helpers for generic type-definition, base-class, and interface fallback when required or enabled
+- optional generated ReactiveUI `IViewLocator`
+- optional generated Avalonia `IDataTemplate`
+- runtime helpers for generic type-definition, base-class, and interface fallback only when required or enabled for a source-declared/legacy `Build` path
 
-By default, the generated lookup order is:
+By default, the legacy generated lookup order is:
 1. exact runtime type
 2. generic type definition for generic runtime types
 3. base type chain
 4. implemented interfaces in reverse order
+
+The generated `IViewLocator` and generated `IDataTemplate.Build` paths intentionally use exact static lookup. This keeps their resolution predictable and avoids the runtime type walking used by the legacy `Build` implementation.
 
 Source generator will generate mappings using convention-based transforms. By default:
 - namespace `ViewModels` becomes `Views`
@@ -279,6 +275,9 @@ These properties are exported as `CompilerVisibleProperty` by the package, so an
 - Explicit view/view-model mapping overrides
 - Compile-time mapping inference from generic MVVM contracts
 - Optional exact factory generation for framework adapters
+- Optional generated ReactiveUI `IViewLocator`
+- Optional generated Avalonia `IDataTemplate`
+- Customizable generated `Build` pipeline hooks
 - Optional omission of runtime type-walking helpers in custom locators
 - Open generic mapping, for example `WidgetViewModel<T> -> WidgetView`
 - Base-class fallback
@@ -293,7 +292,7 @@ These properties are exported as `CompilerVisibleProperty` by the package, so an
 ## Notes
 
 - Convention candidate discovery starts from types whose names end with `ViewModel`. Explicit and generic-contract mappings can add other model types.
-- Missing views do not block fallback resolution. The generator keeps unresolved targets in `s_missingViews`, so a derived type can still fall back to a base-class or interface mapping before returning a `"Not Found"` placeholder.
+- Missing views do not block fallback resolution. The generator keeps unresolved targets in `s_missingViews`, so a derived type can still fall back to a base-class or interface mapping before returning a `"Not Found"` placeholder in the legacy runtime-fallback path.
 - If you provide custom replacement rules, they take precedence over the built-in defaults.
 - Exact factory generation is intentionally separate from runtime fallback. Framework adapters should prefer exact creation when the framework supplies the concrete view-model type.
 
