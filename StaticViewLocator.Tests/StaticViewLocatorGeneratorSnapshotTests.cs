@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using StaticViewLocator.Tests.TestHelpers;
 using Xunit;
@@ -135,6 +137,88 @@ namespace TestApp
             locatorSource,
             StringComparison.Ordinal);
         Assert.DoesNotContain("new TestApp.Screens.DashboardScreen()", locatorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DoesNotChooseAnArbitraryViewForAmbiguousContractMappings()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.Models
+{
+    public sealed class DashboardViewModel
+    {
+    }
+}
+
+namespace ReactiveUI
+{
+    public interface IViewFor
+    {
+        object? ViewModel { get; set; }
+    }
+
+    public interface IViewFor<TViewModel> : IViewFor where TViewModel : class
+    {
+    }
+
+    public interface IViewLocator
+    {
+        IViewFor<TViewModel>? ResolveView<TViewModel>() where TViewModel : class;
+        IViewFor<TViewModel>? ResolveView<TViewModel>(string? contract) where TViewModel : class;
+        IViewFor? ResolveView(object? instance);
+        IViewFor? ResolveView(object? instance, string? contract);
+    }
+}
+
+namespace TestApp.Framework
+{
+    public interface IViewFor<TViewModel>
+    {
+    }
+}
+
+namespace TestApp.Screens
+{
+    public sealed class DashboardView : UserControl,
+        Framework.IViewFor<Models.DashboardViewModel>,
+        ReactiveUI.IViewFor<Models.DashboardViewModel>
+    {
+        public object? ViewModel { get; set; }
+    }
+
+    public sealed class AlternateDashboardView : UserControl,
+        Framework.IViewFor<Models.DashboardViewModel>,
+        ReactiveUI.IViewFor<Models.DashboardViewModel>
+    {
+        public object? ViewModel { get; set; }
+    }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator(
+        GenerateIViewLocator = true,
+        ViewModelMappingContracts = new[] { typeof(Framework.IViewFor<>) })]
+    public partial class ViewLocator
+    {
+    }
+}
+""";
+
+        var result = StaticViewLocatorGeneratorVerifier.RunGenerator(input);
+        var diagnostic = Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0003");
+        var locatorSource = result.RunResult.GeneratedTrees
+            .Single(static tree => tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal))
+            .GetText()
+            .ToString();
+
+        Assert.Contains("DashboardViewModel", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.DoesNotContain("typeof(TestApp.Models.DashboardViewModel)", locatorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("new TestApp.Screens.DashboardView()", locatorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("new TestApp.Screens.AlternateDashboardView()", locatorSource, StringComparison.Ordinal);
     }
 
     [Fact]
