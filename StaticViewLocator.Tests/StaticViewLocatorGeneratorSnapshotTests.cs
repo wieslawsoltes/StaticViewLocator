@@ -1520,6 +1520,47 @@ public partial class ViewLocator
     }
 
     [Fact]
+    public async Task ParsesCommaSeparatedMsBuildConfigurationValues()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.ViewModels.Pages
+{
+    public interface ISettingsViewModel { }
+}
+
+namespace TestApp.Views.Screens
+{
+    public sealed class SettingsScreen : UserControl { }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator { }
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(
+            input,
+            new Dictionary<string, string>
+            {
+                ["build_property.StaticViewLocatorViewModelNamespacePrefixes"] = "Other.Models,TestApp.ViewModels",
+                ["build_property.StaticViewLocatorNamespaceReplacementRules"] = "Foo=Bar,ViewModels=Views,Pages=Screens",
+                ["build_property.StaticViewLocatorTypeNameReplacementRules"] = "Foo=Bar,ViewModel=View,View=Screen",
+                ["build_property.StaticViewLocatorInterfacePrefixesToStrip"] = "Vm,I",
+            });
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.Contains(
+            "[typeof(TestApp.ViewModels.Pages.ISettingsViewModel)] = () => new TestApp.Views.Screens.SettingsScreen()",
+            locatorSource,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task StripsGenericArityFromConfiguredViewNamesByDefault()
     {
         const string input = @"
