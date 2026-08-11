@@ -12,7 +12,7 @@ using Microsoft.CodeAnalysis.Text;
 namespace StaticViewLocator;
 
 [Generator(LanguageNames.CSharp)]
-public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
+public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
 {
     private const string StaticViewLocatorAttributeDisplayString = "StaticViewLocator.StaticViewLocatorAttribute";
     private const string StaticViewMappingAttributeDisplayString = "StaticViewLocator.StaticViewMappingAttribute";
@@ -85,7 +85,13 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
             public bool GenerateRuntimeTypeFallbackMethods { get; set; } = true;
 
+            public bool GenerateIViewLocator { get; set; }
+
+            public bool GenerateIDataTemplate { get; set; }
+
             public Type[] ViewModelMappingContracts { get; set; } = Array.Empty<Type>();
+
+            public Type[] DataTemplateMatchTypes { get; set; } = Array.Empty<Type>();
         }
 
         [AttributeUsage(AttributeTargets.Class, Inherited = false, AllowMultiple = true)]
@@ -157,11 +163,17 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         {
             var (((locatorSymbol, compilation), viewModelSymbols), options) = tuple;
 
-            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, options);
+            var diagnostics = new List<Diagnostic>();
+            var classSource = ProcessClass(compilation, locatorSymbol, viewModelSymbols, options, diagnostics);
+            foreach (var diagnostic in diagnostics)
+            {
+                sourceProductionContext.ReportDiagnostic(diagnostic);
+            }
+
             if (classSource is not null)
             {
                 sourceProductionContext.AddSource(
-                    $"{locatorSymbol.Name}_StaticViewLocator.cs",
+                    GetGeneratedHintName(compilation, locatorSymbol),
                     SourceText.From(classSource, Encoding.UTF8));
             }
         });
@@ -420,7 +432,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             return true;
         }
 
-        var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+        var namespaceName = GetNamespaceName(symbol.ContainingNamespace);
         if (namespaceName.Length == 0)
         {
             return false;
@@ -542,6 +554,11 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
     private static string GetSourceTypeReference(INamedTypeSymbol symbol)
     {
+        if (HasConstructedGenericArguments(symbol))
+        {
+            return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        }
+
         var parts = new Stack<string>();
 
         for (var current = symbol; current is not null; current = current.ContainingType)
@@ -556,8 +573,61 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         var typeName = string.Join(".", parts);
-        var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+        var namespaceName = GetNamespaceName(symbol.ContainingNamespace);
         return string.IsNullOrEmpty(namespaceName) ? typeName : $"{namespaceName}.{typeName}";
+    }
+
+    private static string CombineNamespaceAndType(string namespaceName, string typeName)
+    {
+        return string.IsNullOrEmpty(namespaceName) ? typeName : $"{namespaceName}.{typeName}";
+    }
+
+    private static string GetNamespaceName(INamespaceSymbol namespaceSymbol)
+    {
+        return namespaceSymbol.IsGlobalNamespace ? string.Empty : namespaceSymbol.ToDisplayString();
+    }
+
+    private static string GetGeneratedHintName(Compilation compilation, INamedTypeSymbol locatorSymbol)
+    {
+        var locatorCount = compilation.GetSymbolsWithName(locatorSymbol.Name, SymbolFilter.Type)
+            .OfType<INamedTypeSymbol>()
+            .Where(symbol =>
+                SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, compilation.Assembly) &&
+                symbol.ContainingSymbol.Equals(symbol.ContainingNamespace, SymbolEqualityComparer.Default) &&
+                symbol.GetAttributes().Any(attribute =>
+                    attribute.AttributeClass?.ToDisplayString() == StaticViewLocatorAttributeDisplayString))
+            .Take(2)
+            .Count();
+        if (locatorCount < 2)
+        {
+            return $"{locatorSymbol.Name}_StaticViewLocator.cs";
+        }
+
+        var namespaceName = GetNamespaceName(locatorSymbol.ContainingNamespace);
+        var identity = CombineNamespaceAndType(namespaceName, GetMetadataTypeName(locatorSymbol));
+        var sanitized = new string(identity
+            .Select(static character =>
+                char.IsLetterOrDigit(character) || character is '.' or '_'
+                    ? character
+                    : '_')
+            .ToArray());
+        return $"{sanitized}_StaticViewLocator.cs";
+    }
+
+    private static bool HasConstructedGenericArguments(INamedTypeSymbol symbol)
+    {
+        for (var current = symbol; current is not null; current = current.ContainingType)
+        {
+            foreach (var typeArgument in current.TypeArguments)
+            {
+                if (typeArgument is not ITypeParameterSymbol)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static string StripGenericArity(string typeName)
@@ -603,18 +673,64 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
         ImmutableArray<INamedTypeSymbol> viewModelSymbols,
-        GeneratorOptions options)
+        GeneratorOptions options,
+        List<Diagnostic> diagnostics)
     {
         if (!locatorSymbol.ContainingSymbol.Equals(locatorSymbol.ContainingNamespace, SymbolEqualityComparer.Default))
         {
+            diagnostics.Add(Diagnostic.Create(
+                UnsupportedLocatorType,
+                GetDiagnosticLocation(locatorSymbol),
+                locatorSymbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                "nested"));
             return null;
         }
 
-        var namespaceNameLocator = locatorSymbol.ContainingNamespace.ToDisplayString();
+        var hasNonPartialDeclaration = locatorSymbol.DeclaringSyntaxReferences
+            .Select(static reference => reference.GetSyntax())
+            .OfType<ClassDeclarationSyntax>()
+            .Any(static declaration => !declaration.Modifiers.Any(SyntaxKind.PartialKeyword));
+        if (locatorSymbol.IsStatic || locatorSymbol.IsFileLocal || hasNonPartialDeclaration)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                UnsupportedLocatorType,
+                GetDiagnosticLocation(locatorSymbol),
+                locatorSymbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                locatorSymbol.IsStatic
+                    ? "static"
+                    : locatorSymbol.IsFileLocal
+                        ? "file-local"
+                        : "not partial"));
+            return null;
+        }
+
+        var namespaceNameLocator = GetNamespaceName(locatorSymbol.ContainingNamespace);
+        var namespaceDeclaration = string.IsNullOrEmpty(namespaceNameLocator)
+            ? string.Empty
+            : $"namespace {namespaceNameLocator};\n\n";
+        var locatorAccessibility = locatorSymbol.DeclaredAccessibility == Accessibility.Public
+            ? "public"
+            : "internal";
 
         var buildMethodExists = locatorSymbol.GetMembers()
             .OfType<IMethodSymbol>()
             .Any(method => method.Name == "Build" && method.Parameters.Length == 1);
+        var generateIViewLocator = ShouldGenerateIViewLocator(locatorSymbol);
+        var generateIDataTemplate = ShouldGenerateIDataTemplate(locatorSymbol);
+        generateIViewLocator = ValidateReactiveUIAdapterTypes(
+            compilation,
+            locatorSymbol,
+            diagnostics,
+            generateIViewLocator);
+        generateIDataTemplate = ValidateDataTemplateAdapterTypes(
+            compilation,
+            locatorSymbol,
+            diagnostics,
+            generateIDataTemplate);
+        var dataTemplateBuildMethodExists = generateIDataTemplate &&
+                                            HasDataTemplateBuildMethod(locatorSymbol, diagnostics);
+        var dataTemplateMatchMethodExists = generateIDataTemplate &&
+                                            HasDataTemplateMatchMethod(locatorSymbol, diagnostics);
 
         var format = new SymbolDisplayFormat(
             typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypes,
@@ -627,9 +743,28 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         var relevantViewModels = new List<INamedTypeSymbol>();
         var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var viewBaseTypes = GetViewBaseTypes(compilation, options);
-        var inferredMappings = GetInferredMappings(compilation, locatorSymbol, viewBaseTypes);
         var explicitMappings = GetExplicitMappings(locatorSymbol);
-
+        var inferredMappings = GetInferredMappings(
+            compilation,
+            locatorSymbol,
+            viewBaseTypes,
+            explicitMappings,
+            diagnostics);
+        if (generateIViewLocator)
+        {
+            foreach (var mapping in GetReactiveUIMappings(
+                         compilation,
+                         viewBaseTypes,
+                         inferredMappings,
+                         explicitMappings,
+                         diagnostics))
+            {
+                if (!inferredMappings.ContainsKey(mapping.Key))
+                {
+                    inferredMappings.Add(mapping.Key, mapping.Value);
+                }
+            }
+        }
         foreach (var mapping in explicitMappings)
         {
             inferredMappings[mapping.Key] = mapping.Value;
@@ -659,6 +794,11 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         relevantViewModels.Sort(static (left, right) =>
             string.Compare(left.ToDisplayString(), right.ToDisplayString(), StringComparison.Ordinal));
 
+        var generatedInterfacesClause = GetGeneratedInterfacesClause(
+            locatorSymbol,
+            generateIViewLocator,
+            generateIDataTemplate);
+
         var source = new StringBuilder(
             $$"""
             // <auto-generated />
@@ -667,9 +807,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             using System.Collections.Generic;
             using Avalonia.Controls;
 
-            namespace {{namespaceNameLocator}};
-
-            public partial class {{classNameLocator}}
+            {{namespaceDeclaration}}{{locatorAccessibility}} partial class {{classNameLocator}}{{generatedInterfacesClause}}
             {
             """);
 
@@ -679,7 +817,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         foreach (var viewModelSymbol in relevantViewModels)
         {
-            var namespaceNameViewModel = viewModelSymbol.ContainingNamespace.ToDisplayString();
+            var namespaceNameViewModel = GetNamespaceName(viewModelSymbol.ContainingNamespace);
             var sourceTypeNameViewModel = GetSourceTypeName(viewModelSymbol);
             var metadataTypeNameViewModel = GetMetadataTypeName(viewModelSymbol);
 
@@ -702,8 +840,8 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             }
 
             var classNameViewModel = GetSourceTypeReference(viewModelSymbol);
-            var classNameView = $"{sourceNamespaceView}.{sourceTypeNameView}";
-            var metadataNameView = $"{metadataNamespaceView}.{metadataTypeNameView}";
+            var classNameView = CombineNamespaceAndType(sourceNamespaceView, sourceTypeNameView);
+            var metadataNameView = CombineNamespaceAndType(metadataNamespaceView, metadataTypeNameView);
 
             INamedTypeSymbol? viewSymbol;
             if (inferredMappings.TryGetValue(viewModelSymbol, out var explicitViewSymbol))
@@ -727,6 +865,16 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 continue;
             }
 
+            if (!CanInstantiateView(compilation, locatorSymbol, viewSymbol))
+            {
+                diagnostics.Add(Diagnostic.Create(
+                    ViewCannotBeConstructed,
+                    GetDiagnosticLocation(viewSymbol),
+                    viewSymbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                    viewModelSymbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
+                continue;
+            }
+
             source.AppendLine($"\t\t[typeof({classNameViewModel})] = () => new {classNameView}(),");
         }
 
@@ -737,7 +885,7 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         foreach (var viewModelSymbol in relevantViewModels)
         {
-            var namespaceNameViewModel = viewModelSymbol.ContainingNamespace.ToDisplayString();
+            var namespaceNameViewModel = GetNamespaceName(viewModelSymbol.ContainingNamespace);
             var sourceTypeNameViewModel = GetSourceTypeName(viewModelSymbol);
             var metadataTypeNameViewModel = GetMetadataTypeName(viewModelSymbol);
 
@@ -760,8 +908,8 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             }
 
             var classNameViewModel = GetSourceTypeReference(viewModelSymbol);
-            var classNameView = $"{sourceNamespaceView}.{sourceTypeNameView}";
-            var metadataNameView = $"{metadataNamespaceView}.{metadataTypeNameView}";
+            var classNameView = CombineNamespaceAndType(sourceNamespaceView, sourceTypeNameView);
+            var metadataNameView = CombineNamespaceAndType(metadataNamespaceView, metadataTypeNameView);
 
             INamedTypeSymbol? viewSymbol;
             if (inferredMappings.TryGetValue(viewModelSymbol, out var explicitViewSymbol))
@@ -775,7 +923,9 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
             }
             var isSupportedView = viewSymbol is not null && IsSupportedView(viewSymbol, viewBaseTypes);
 
-            if (viewSymbol is not null && isSupportedView)
+            if (viewSymbol is not null &&
+                isSupportedView &&
+                (viewSymbol.IsGenericType || CanInstantiateView(compilation, locatorSymbol, viewSymbol)))
             {
                 continue;
             }
@@ -786,7 +936,8 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 
         source.AppendLine("\t};");
 
-        if (ShouldGenerateViewFactoryMethods(locatorSymbol))
+        if ((ShouldGenerateViewFactoryMethods(locatorSymbol) || generateIViewLocator || generateIDataTemplate) &&
+            !HasTryCreateViewExact(locatorSymbol, diagnostics))
         {
             source.Append(
                 """
@@ -803,9 +954,15 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 		return false;
 	}
 """);
+            source.AppendLine();
         }
 
-        if (!buildMethodExists)
+        if (generateIViewLocator)
+        {
+            AppendIViewLocator(source, locatorSymbol, diagnostics);
+        }
+
+        if (!buildMethodExists && !generateIDataTemplate)
         {
             source.Append(
                 """
@@ -837,7 +994,21 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
 """);
         }
 
-        if (!buildMethodExists || ShouldGenerateRuntimeTypeFallbackMethods(locatorSymbol))
+        if (!dataTemplateBuildMethodExists && generateIDataTemplate)
+        {
+            AppendDataTemplateBuild(source, compilation, locatorSymbol, generateIViewLocator, diagnostics);
+        }
+
+        if (generateIDataTemplate && !dataTemplateMatchMethodExists)
+        {
+            AppendDataTemplateMatch(source, locatorSymbol, diagnostics);
+        }
+
+        var shouldGenerateRuntimeFallbackMethods =
+            (!buildMethodExists && !generateIDataTemplate) ||
+            ((generateIDataTemplate ? dataTemplateBuildMethodExists : buildMethodExists) &&
+             ShouldGenerateRuntimeTypeFallbackMethods(locatorSymbol));
+        if (shouldGenerateRuntimeFallbackMethods)
         {
             source.Append(
                 """
@@ -1014,7 +1185,9 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
     private static Dictionary<INamedTypeSymbol, INamedTypeSymbol> GetInferredMappings(
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
-        HashSet<INamedTypeSymbol> viewBaseTypes)
+        HashSet<INamedTypeSymbol> viewBaseTypes,
+        IReadOnlyDictionary<INamedTypeSymbol, INamedTypeSymbol> explicitMappings,
+        ICollection<Diagnostic> diagnostics)
     {
         var contracts = GetViewModelMappingContracts(locatorSymbol);
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
@@ -1036,7 +1209,27 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
                 continue;
             }
 
-            mappings[viewModelType] = viewType;
+            if (explicitMappings.ContainsKey(viewModelType))
+            {
+                continue;
+            }
+
+            if (mappings.TryGetValue(viewModelType, out var existingView))
+            {
+                if (!SymbolEqualityComparer.Default.Equals(existingView, viewType))
+                {
+                    diagnostics.Add(Diagnostic.Create(
+                        AmbiguousViewMapping,
+                        GetDiagnosticLocation(viewType),
+                        viewModelType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                        existingView.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                        viewType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
+                }
+
+                continue;
+            }
+
+            mappings.Add(viewModelType, viewType);
         }
 
         return mappings;
@@ -1149,6 +1342,25 @@ public sealed class StaticViewLocatorGenerator : IIncrementalGenerator
         }
 
         return false;
+    }
+
+    private static bool CanInstantiateView(
+        Compilation compilation,
+        INamedTypeSymbol locatorSymbol,
+        INamedTypeSymbol viewSymbol)
+    {
+        if (viewSymbol.TypeKind != TypeKind.Class ||
+            viewSymbol.IsAbstract ||
+            viewSymbol.IsStatic ||
+            viewSymbol.IsGenericType ||
+            !compilation.IsSymbolAccessibleWithin(viewSymbol, locatorSymbol))
+        {
+            return false;
+        }
+
+        return viewSymbol.InstanceConstructors.Any(constructor =>
+            compilation.IsSymbolAccessibleWithin(constructor, locatorSymbol) &&
+            constructor.Parameters.All(static parameter => parameter.IsOptional || parameter.IsParams));
     }
 
     private static bool ShouldGenerateViewFactoryMethods(INamedTypeSymbol locatorSymbol)
