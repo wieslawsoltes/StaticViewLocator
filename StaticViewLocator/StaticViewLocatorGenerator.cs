@@ -739,7 +739,6 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
                              SymbolDisplayGenericsOptions.IncludeVariance);
 
         var classNameLocator = locatorSymbol.ToDisplayString(format);
-        var locatorAccessibility = GetAccessibilityKeyword(locatorSymbol.DeclaredAccessibility);
 
         var relevantViewModels = new List<INamedTypeSymbol>();
         var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
@@ -1138,16 +1137,6 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
         source.AppendLine("}");
 
         return source.ToString();
-    }
-
-    private static string GetAccessibilityKeyword(Accessibility accessibility)
-    {
-        return accessibility switch
-        {
-            Accessibility.Internal => "internal",
-            Accessibility.Public => "public",
-            _ => "public",
-        };
     }
 
     private static Dictionary<INamedTypeSymbol, INamedTypeSymbol> GetExplicitMappings(INamedTypeSymbol locatorSymbol)
