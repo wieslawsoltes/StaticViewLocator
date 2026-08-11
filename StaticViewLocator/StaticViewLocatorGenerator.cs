@@ -1215,6 +1215,11 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
                 continue;
             }
 
+            if (ambiguousViewModels.Contains(viewModelType))
+            {
+                continue;
+            }
+
             if (mappings.TryGetValue(viewModelType, out var existingView))
             {
                 if (!SymbolEqualityComparer.Default.Equals(existingView, viewType))
@@ -1225,6 +1230,8 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
                         viewModelType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                         existingView.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                         viewType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
+                    mappings.Remove(viewModelType);
+                    ambiguousViewModels.Add(viewModelType);
                 }
 
                 continue;

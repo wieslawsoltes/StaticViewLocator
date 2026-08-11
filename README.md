@@ -101,7 +101,7 @@ Contract discovery has these constraints:
 - discovered views must derive from `UserControl`, `Window`, or a type configured through `StaticViewLocatorAdditionalViewBaseTypes`;
 - discovered views must be accessible to the locator and expose an accessible constructor callable without arguments;
 - contract discovery happens at compile time and adds no runtime assembly scanning;
-- ambiguous configured-contract or automatic ReactiveUI mappings produce `SVL0003` and must be resolved with an explicit `[StaticViewMapping]` override.
+- ambiguous configured-contract mappings are omitted, produce `SVL0003`, and must be resolved with an explicit `[StaticViewMapping]` override; automatic ReactiveUI ambiguities also produce `SVL0003`.
 
 Mapping sources are applied in this order, from highest to lowest priority:
 

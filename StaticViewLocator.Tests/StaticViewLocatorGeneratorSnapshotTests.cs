@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using StaticViewLocator.Tests.TestHelpers;
 using Xunit;
@@ -117,7 +119,7 @@ namespace TestApp
     }
 
     [Fact]
-    public async Task DoesNotChooseAnArbitraryViewForAmbiguousContractMappings()
+    public void DoesNotChooseAnArbitraryViewForAmbiguousContractMappings()
     {
         const string input = """
 using Avalonia.Controls;
@@ -158,9 +160,14 @@ namespace TestApp
 }
 """;
 
-        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(input);
-        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+        var result = StaticViewLocatorGeneratorVerifier.RunGenerator(input);
+        var diagnostic = Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0003");
+        var locatorSource = result.RunResult.GeneratedTrees
+            .Single(static tree => tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal))
+            .GetText()
+            .ToString();
 
+        Assert.Contains("DashboardModel", diagnostic.GetMessage(), StringComparison.Ordinal);
         Assert.DoesNotContain("typeof(TestApp.Models.DashboardModel)", locatorSource, StringComparison.Ordinal);
         Assert.DoesNotContain("new TestApp.Screens.DashboardScreen()", locatorSource, StringComparison.Ordinal);
         Assert.DoesNotContain("new TestApp.Screens.AlternateDashboardScreen()", locatorSource, StringComparison.Ordinal);
