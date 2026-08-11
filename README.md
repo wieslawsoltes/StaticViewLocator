@@ -96,6 +96,7 @@ This generates `DashboardModel -> DashboardScreen` even though neither type foll
 Contract discovery has these constraints:
 
 - each configured contract must be an open generic type with exactly one type parameter;
+- invalid configured contracts are ignored and produce the `SVL0006` error;
 - the contract may be an interface or a base class, including one inherited indirectly;
 - discovered views must be concrete, non-generic types from the current compilation;
 - discovered views must derive from `UserControl`, `Window`, or a type configured through `StaticViewLocatorAdditionalViewBaseTypes`;
@@ -213,6 +214,7 @@ The solution builds the same complete AXAML sample against both distributions. `
 | `SVL0003` | Error | More than one inferred view maps to the same view model. |
 | `SVL0004` | Error | A mapped view is inaccessible, abstract, or has no accessible constructor callable without arguments. |
 | `SVL0005` | Error | The annotated locator is nested, static, file-local, or not partial. |
+| `SVL0006` | Error | A configured mapping contract is not an open generic interface or class with exactly one type parameter. |
 
 ### Attribute options
 

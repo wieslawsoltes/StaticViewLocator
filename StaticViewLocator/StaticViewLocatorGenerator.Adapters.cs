@@ -60,6 +60,15 @@ public sealed partial class StaticViewLocatorGenerator
         isEnabledByDefault: true,
         description: "Generated partial declarations cannot extend static or file-local locator classes.");
 
+    private static readonly DiagnosticDescriptor InvalidMappingContract = new(
+        id: "SVL0006",
+        title: "Configured view-model mapping contract is invalid",
+        messageFormat: "Mapping contract '{0}' must be an open generic interface or class with exactly one type parameter",
+        category: "StaticViewLocator.Generation",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Configured contract discovery requires an open generic interface or class with exactly one type parameter.");
+
     private static Dictionary<INamedTypeSymbol, INamedTypeSymbol> GetReactiveUIMappings(
         Compilation compilation,
         HashSet<INamedTypeSymbol> viewBaseTypes,

@@ -10,6 +10,35 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorSnapshotTests
 {
     [Fact]
+    public void ReportsInvalidMappingContracts()
+    {
+        const string input = """
+using StaticViewLocator;
+
+namespace TestApp;
+
+public interface IInvalidContract { }
+public interface IViewFor<TViewModel> { }
+
+[StaticViewLocator(ViewModelMappingContracts = new[]
+{
+    typeof(IInvalidContract),
+    typeof(IViewFor<string>)
+})]
+public partial class ViewLocator { }
+""";
+
+        var result = StaticViewLocatorGeneratorVerifier.RunGenerator(input);
+        var diagnostics = result.GeneratorDiagnostics
+            .Where(static item => item.Id == "SVL0006")
+            .ToArray();
+
+        Assert.Equal(2, diagnostics.Length);
+        Assert.Contains(diagnostics, static item => item.GetMessage().Contains("TestApp.IInvalidContract", StringComparison.Ordinal));
+        Assert.Contains(diagnostics, static item => item.GetMessage().Contains("TestApp.IViewFor<string>", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GeneratesFactoriesForConstructorsCallableWithoutArguments()
     {
         const string input = """

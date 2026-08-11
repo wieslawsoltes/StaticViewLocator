@@ -1194,7 +1194,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
         ICollection<Diagnostic> diagnostics,
         HashSet<INamedTypeSymbol> ambiguousViewModels)
     {
-        var contracts = GetViewModelMappingContracts(locatorSymbol);
+        var contracts = GetViewModelMappingContracts(locatorSymbol, diagnostics);
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
         if (contracts.Count == 0)
         {
@@ -1247,7 +1247,9 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
         return mappings;
     }
 
-    private static HashSet<INamedTypeSymbol> GetViewModelMappingContracts(INamedTypeSymbol locatorSymbol)
+    private static HashSet<INamedTypeSymbol> GetViewModelMappingContracts(
+        INamedTypeSymbol locatorSymbol,
+        ICollection<Diagnostic> diagnostics)
     {
         var contracts = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var locatorAttribute = locatorSymbol.GetAttributes()
@@ -1266,10 +1268,23 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
 
             foreach (var value in argument.Value.Values)
             {
-                if (value.Value is INamedTypeSymbol contract && contract.Arity == 1)
+                if (value.Value is not INamedTypeSymbol contract)
+                {
+                    continue;
+                }
+
+                if (contract.Arity == 1 &&
+                    (contract.TypeKind == TypeKind.Interface || contract.TypeKind == TypeKind.Class) &&
+                    contract.IsUnboundGenericType)
                 {
                     contracts.Add(contract.OriginalDefinition);
+                    continue;
                 }
+
+                diagnostics.Add(Diagnostic.Create(
+                    InvalidMappingContract,
+                    GetDiagnosticLocation(locatorSymbol),
+                    contract.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
             }
         }
 
