@@ -74,7 +74,8 @@ public sealed partial class StaticViewLocatorGenerator
         HashSet<INamedTypeSymbol> viewBaseTypes,
         IReadOnlyDictionary<INamedTypeSymbol, INamedTypeSymbol> configuredMappings,
         IReadOnlyDictionary<INamedTypeSymbol, INamedTypeSymbol> explicitMappings,
-        ICollection<Diagnostic> diagnostics)
+        ICollection<Diagnostic> diagnostics,
+        HashSet<INamedTypeSymbol> ambiguousViewModels)
     {
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var reactiveUIViewFor = compilation.GetTypeByMetadataName(ReactiveUIViewForMetadataName);
@@ -100,7 +101,9 @@ public sealed partial class StaticViewLocatorGenerator
                 continue;
             }
 
-            if (configuredMappings.ContainsKey(viewModelType) || explicitMappings.ContainsKey(viewModelType))
+            if (ambiguousViewModels.Contains(viewModelType) ||
+                configuredMappings.ContainsKey(viewModelType) ||
+                explicitMappings.ContainsKey(viewModelType))
             {
                 continue;
             }
@@ -115,6 +118,8 @@ public sealed partial class StaticViewLocatorGenerator
                         viewModelType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                         existingView.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                         viewType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
+                    mappings.Remove(viewModelType);
+                    ambiguousViewModels.Add(viewModelType);
                 }
 
                 continue;
