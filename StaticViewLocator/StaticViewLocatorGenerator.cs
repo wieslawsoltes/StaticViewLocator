@@ -14,22 +14,6 @@ namespace StaticViewLocator;
 [Generator(LanguageNames.CSharp)]
 public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
 {
-    private static readonly DiagnosticDescriptor InvalidMappingContract = new(
-        id: "SVL001",
-        title: "Invalid view-model mapping contract",
-        messageFormat: "Mapping contract '{0}' must be an open generic interface or class with exactly one type parameter",
-        category: "StaticViewLocator",
-        defaultSeverity: DiagnosticSeverity.Warning,
-        isEnabledByDefault: true);
-
-    private static readonly DiagnosticDescriptor AmbiguousContractMapping = new(
-        id: "SVL002",
-        title: "Ambiguous contract-based view mapping",
-        messageFormat: "View model '{0}' is associated with multiple views ('{1}' and '{2}'); '{2}' was selected. Add StaticViewMappingAttribute to select a view explicitly",
-        category: "StaticViewLocator",
-        defaultSeverity: DiagnosticSeverity.Warning,
-        isEnabledByDefault: true);
-
     private const string StaticViewLocatorAttributeDisplayString = "StaticViewLocator.StaticViewLocatorAttribute";
     private const string StaticViewMappingAttributeDisplayString = "StaticViewLocator.StaticViewMappingAttribute";
     private const string ViewModelSuffix = "ViewModel";
@@ -1205,7 +1189,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
         IReadOnlyDictionary<INamedTypeSymbol, INamedTypeSymbol> explicitMappings,
         ICollection<Diagnostic> diagnostics)
     {
-        var contracts = GetViewModelMappingContracts(locatorSymbol, context);
+        var contracts = GetViewModelMappingContracts(locatorSymbol, diagnostics);
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
         if (contracts.Count == 0)
         {
@@ -1253,7 +1237,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
 
     private static HashSet<INamedTypeSymbol> GetViewModelMappingContracts(
         INamedTypeSymbol locatorSymbol,
-        SourceProductionContext context)
+        ICollection<Diagnostic> diagnostics)
     {
         var contracts = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var locatorAttribute = locatorSymbol.GetAttributes()
@@ -1285,10 +1269,10 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
                     continue;
                 }
 
-                context.ReportDiagnostic(Diagnostic.Create(
+                diagnostics.Add(Diagnostic.Create(
                     InvalidMappingContract,
-                    locatorSymbol.Locations.FirstOrDefault(),
-                    contract.ToDisplayString()));
+                    GetDiagnosticLocation(locatorSymbol),
+                    contract.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
             }
         }
 
