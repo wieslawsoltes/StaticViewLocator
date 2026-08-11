@@ -1,0 +1,26 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:StaticViewLocatorReactiveUIDemo.ViewModels"
+             x:Class="StaticViewLocatorReactiveUIDemo.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel"
+             d:DesignWidth="480"
+             d:DesignHeight="320"
+             mc:Ignorable="d">
+
+  <Design.DataContext>
+    <vm:SettingsViewModel />
+  </Design.DataContext>
+
+  <Border Padding="28">
+    <StackPanel VerticalAlignment="Center"
+                Spacing="12">
+      <TextBlock Text="{CompiledBinding Title}"
+                 FontSize="28"
+                 FontWeight="SemiBold" />
+      <TextBlock Text="{CompiledBinding Description}"
+                 TextWrapping="Wrap" />
+    </StackPanel>
+  </Border>
+</UserControl>

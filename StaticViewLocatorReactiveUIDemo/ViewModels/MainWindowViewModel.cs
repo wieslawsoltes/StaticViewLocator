@@ -1,3 +1,4 @@
+using System.Windows.Input;
 using ReactiveUI;
 
 namespace StaticViewLocatorReactiveUIDemo.ViewModels;
@@ -14,6 +15,10 @@ public sealed class MainWindowViewModel : ViewModelBase
         WrappedSettings = new ContextHost(Settings);
         _currentContent = Home;
         _currentViewModel = Home;
+
+        ShowHomeCommand = ReactiveCommand.Create(ShowHome);
+        ShowSettingsCommand = ReactiveCommand.Create(ShowSettings);
+        ShowWrappedSettingsCommand = ReactiveCommand.Create(ShowWrappedSettings);
     }
 
     public HomeViewModel Home { get; }
@@ -21,6 +26,12 @@ public sealed class MainWindowViewModel : ViewModelBase
     public SettingsViewModel Settings { get; }
 
     public ContextHost WrappedSettings { get; }
+
+    public ICommand ShowHomeCommand { get; }
+
+    public ICommand ShowSettingsCommand { get; }
+
+    public ICommand ShowWrappedSettingsCommand { get; }
 
     public object? CurrentContent
     {
@@ -34,19 +45,19 @@ public sealed class MainWindowViewModel : ViewModelBase
         private set => this.RaiseAndSetIfChanged(ref _currentViewModel, value);
     }
 
-    public void ShowHome()
+    private void ShowHome()
     {
         CurrentContent = Home;
         CurrentViewModel = Home;
     }
 
-    public void ShowSettings()
+    private void ShowSettings()
     {
         CurrentContent = Settings;
         CurrentViewModel = Settings;
     }
 
-    public void ShowWrappedSettings()
+    private void ShowWrappedSettings()
     {
         CurrentContent = WrappedSettings;
         CurrentViewModel = Settings;

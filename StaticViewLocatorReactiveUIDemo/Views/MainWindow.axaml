@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="using:StaticViewLocatorReactiveUIDemo"
+        xmlns:rxui="using:ReactiveUI.Avalonia"
+        xmlns:vm="using:StaticViewLocatorReactiveUIDemo.ViewModels"
+        x:Class="StaticViewLocatorReactiveUIDemo.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="StaticViewLocator + ReactiveUI"
+        Width="960"
+        Height="560"
+        MinWidth="720"
+        MinHeight="440"
+        d:DesignWidth="960"
+        d:DesignHeight="560"
+        mc:Ignorable="d">
+
+  <Design.DataContext>
+    <vm:MainWindowViewModel />
+  </Design.DataContext>
+
+  <Grid Margin="24"
+        RowDefinitions="Auto,*"
+        RowSpacing="16">
+    <StackPanel Orientation="Horizontal"
+                Spacing="8">
+      <Button Content="Home"
+              Command="{CompiledBinding ShowHomeCommand}" />
+      <Button Content="Settings"
+              Command="{CompiledBinding ShowSettingsCommand}" />
+      <Button Content="Fallback wrapper"
+              Command="{CompiledBinding ShowWrappedSettingsCommand}" />
+    </StackPanel>
+
+    <Grid Grid.Row="1"
+          ColumnDefinitions="*,*"
+          ColumnSpacing="16">
+      <Border Padding="16"
+              BorderThickness="1">
+        <Grid RowDefinitions="Auto,*"
+              RowSpacing="12">
+          <TextBlock Text="Avalonia IDataTemplate"
+                     FontWeight="SemiBold" />
+          <ContentControl Grid.Row="1"
+                          Content="{CompiledBinding CurrentContent}"
+                          HorizontalContentAlignment="Stretch"
+                          VerticalContentAlignment="Stretch" />
+        </Grid>
+      </Border>
+
+      <Border Grid.Column="1"
+              Padding="16"
+              BorderThickness="1">
+        <Grid RowDefinitions="Auto,*"
+              RowSpacing="12">
+          <TextBlock Text="ReactiveUI IViewLocator"
+                     FontWeight="SemiBold" />
+          <rxui:ViewModelViewHost Grid.Row="1"
+                                  ViewModel="{CompiledBinding CurrentViewModel}"
+                                  HorizontalContentAlignment="Stretch"
+                                  VerticalContentAlignment="Stretch">
+            <rxui:ViewModelViewHost.ViewLocator>
+              <local:ViewLocator />
+            </rxui:ViewModelViewHost.ViewLocator>
+          </rxui:ViewModelViewHost>
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</Window>
