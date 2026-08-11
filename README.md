@@ -136,13 +136,24 @@ using StaticViewLocator;
     GenerateIViewLocator = true,
     GenerateIDataTemplate = true,
     GenerateRuntimeTypeFallbackMethods = false,
-    DataTemplateMatchTypes = new[] { typeof(ViewModelBase), typeof(IDockable) })]
+    DataTemplateMatchTypes = new[] { typeof(ViewModelBase) })]
 public partial class ViewLocator
 {
 }
 ```
 
 `GenerateIViewLocator = true` requires the consumer project to reference ReactiveUI. It automatically discovers concrete Avalonia views implementing `ReactiveUI.IViewFor<TViewModel>`, so `ViewModelMappingContracts = new[] { typeof(IViewFor<>) }` and `GenerateViewFactoryMethods = true` are not required for this mode. User-configured `ViewModelMappingContracts` take precedence over this automatic ReactiveUI inference, while `[StaticViewMapping]` remains the final override. The generated locator implements all four current ReactiveUI resolution overloads. Runtime-instance resolution assigns `IViewFor.ViewModel`; non-null contracts return `null` because the generated map is currently unkeyed.
+
+#### ReactiveUI package families
+
+ReactiveUI 24 is available in two mutually exclusive distribution families. Choose one complete family for an application and keep every ReactiveUI and Avalonia package on that same row:
+
+| Mode | ReactiveUI packages | Concrete implementation namespaces |
+| --- | --- | --- |
+| Primitives | `ReactiveUI`, `ReactiveUI.Avalonia` | `ReactiveUI`, `ReactiveUI.Avalonia` |
+| System.Reactive | `ReactiveUI.Reactive`, `ReactiveUI.Avalonia.Reactive` | `ReactiveUI.Reactive`, `ReactiveUI.Avalonia.Reactive` |
+
+Do not reference packages from both rows in the same application. StaticViewLocator supports either mode without a generator option because its generated adapter uses only the distribution-neutral contracts `ReactiveUI.IViewFor`, `ReactiveUI.IViewFor<TViewModel>`, and `ReactiveUI.IViewLocator`. Only application code that uses concrete types such as `ReactiveObject`, `ReactiveCommand`, `ViewModelViewHost`, or `UseReactiveUI` needs the namespace from the selected distribution.
 
 `GenerateIDataTemplate = true` adds `IDataTemplate`, `Control? Build(object?)`, and `Match(object?)`. `DataTemplateMatchTypes` provides a fast application-specific match predicate. If it is empty, the generated `Match` checks the statically generated view and missing-view maps using the same exact-type semantics as generated `Build`.
 
@@ -153,19 +164,24 @@ The generated `Build` pipeline is:
 3. `BuildFallbackView(param)` for application-specific fallback cases.
 4. `BuildMissingView(param, viewModelType)` for the final not-found control.
 
-For non-sealed locator classes, default hook implementations are generated as `protected virtual`, allowing normal subclass overrides. For sealed locator classes the generated defaults are `private`, because virtual members are illegal on sealed types. In both cases, a hook with the corresponding by-value `object?`-based signature declared directly in the annotated partial class suppresses generation of that default hook; unrelated or `ref`/`in`/`out` overloads do not suppress it. A custom hook return type must be implicitly convertible to `Control?`. This allows application-specific behavior without replacing the public generated `Build` method. For example, a Dock-style context fallback can be implemented as:
+For non-sealed locator classes, default hook implementations are generated as `protected virtual`, allowing normal subclass overrides. For sealed locator classes the generated defaults are `private`, because virtual members are illegal on sealed types. In both cases, a hook with the corresponding by-value `object?`-based signature declared directly in the annotated partial class suppresses generation of that default hook; unrelated or `ref`/`in`/`out` overloads do not suppress it. A custom hook return type must be implicitly convertible to `Control?`. This allows application-specific behavior without replacing the public generated `Build` method. For example, an application-specific context fallback can be implemented as:
 
 ```csharp
+public interface IContextHost
+{
+    object? Context { get; }
+}
+
 [StaticViewLocator(
     GenerateIViewLocator = true,
     GenerateIDataTemplate = true,
     GenerateRuntimeTypeFallbackMethods = false,
-    DataTemplateMatchTypes = new[] { typeof(ViewModelBase), typeof(IDockable) })]
+    DataTemplateMatchTypes = new[] { typeof(ViewModelBase), typeof(IContextHost) })]
 public partial class ViewLocator
 {
     protected virtual Control? BuildFallbackView(object? param)
     {
-        if (param is not IDockable { Context: ViewModelBase })
+        if (param is not IContextHost { Context: ViewModelBase })
         {
             return null;
         }
@@ -176,17 +192,17 @@ public partial class ViewLocator
         };
         contentControl.Bind(
             ContentControl.ContentProperty,
-            new Binding(nameof(IDockable.Context)));
+            new Binding(nameof(IContextHost.Context)));
         return contentControl;
     }
 }
 ```
 
-The generator assembly itself does not reference ReactiveUI. ReactiveUI types are referenced only in generated consumer source when `GenerateIViewLocator` is enabled.
+The generator assembly itself does not reference ReactiveUI. Distribution-neutral ReactiveUI contract types are referenced only in generated consumer source when `GenerateIViewLocator` is enabled.
 
 Source-declared public adapter methods are reused only when they implement the corresponding framework contract: public instance accessibility, by-value parameters, the expected return type, and the ReactiveUI `where TViewModel : class` constraint. A same-signature member that cannot implement the contract produces `SVL0002` rather than silently suppressing required generated code.
 
-A complete Avalonia + ReactiveUI example is available in `StaticViewLocatorReactiveUIDemo`. It displays the same navigation state through two side-by-side paths: an Avalonia `ContentControl` using the generated `IDataTemplate`, and a ReactiveUI `ViewModelViewHost` whose `ViewLocator` is the generated locator. The sample also demonstrates the context-wrapper fallback without runtime view scanning.
+The solution builds the same complete AXAML sample against both distributions. `StaticViewLocatorReactiveUIDemo` covers the primitives packages, while `StaticViewLocatorReactiveUIDemo.Reactive` links the same C# and AXAML source and covers the System.Reactive packages. The shared UI displays the same navigation state through two side-by-side paths: an Avalonia `ContentControl` using the generated `IDataTemplate`, and a ReactiveUI `ViewModelViewHost` whose `ViewLocator` is the generated locator. It also demonstrates the context-wrapper fallback without runtime view scanning. A small local `ReactiveViewHost` wrapper keeps the AXAML distribution-neutral because the concrete ReactiveUI control namespace differs between package families.
 
 ### Generator diagnostics
 
