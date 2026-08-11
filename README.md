@@ -329,6 +329,7 @@ The incremental pipeline remains split into the original source view-model disco
 - Convention candidate discovery starts from types whose names end with `ViewModel`. Explicit and generic-contract mappings can add other model types.
 - Missing views do not block fallback resolution. The generator keeps unresolved targets in `s_missingViews`, so a derived type can still fall back to a base-class or interface mapping before returning a `"Not Found"` placeholder in the legacy runtime-fallback path.
 - If you provide custom replacement rules, they take precedence over the built-in defaults.
+- Replacement targets may be empty. For example, `ViewModel=` removes the `ViewModel` suffix without adding a replacement suffix.
 - Exact factory generation is intentionally separate from runtime fallback. Framework adapters should prefer exact creation when the framework supplies the concrete view-model type.
 
 Default view base types:
