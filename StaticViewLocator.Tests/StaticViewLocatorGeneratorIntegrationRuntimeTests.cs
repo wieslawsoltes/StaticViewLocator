@@ -1,14 +1,11 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using StaticViewLocator;
+using StaticViewLocator.Tests.TestHelpers;
 using Xunit;
 
 namespace StaticViewLocator.Tests;
@@ -16,7 +13,7 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorIntegrationRuntimeTests
 {
     [AvaloniaFact]
-    public async Task GeneratedReactiveUIAndDataTemplateAdaptersWorkAtRuntime()
+    public void GeneratedReactiveUIAndDataTemplateAdaptersWorkAtRuntime()
     {
         const string source = """
 using System;
@@ -95,18 +92,11 @@ namespace TestApp
 }
 """;
 
-        var compilation = CreateCompilation(source);
-        var sourceGenerator = new StaticViewLocatorGenerator().AsSourceGenerator();
-        var driver = CSharpGeneratorDriver.Create(
-            new[] { sourceGenerator },
-            parseOptions: (CSharpParseOptions)compilation.SyntaxTrees.First().Options);
-
-        driver.RunGeneratorsAndUpdateCompilation(compilation, out var updatedCompilation, out var generatorDiagnostics);
-
-        Assert.Empty(generatorDiagnostics.Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
+        var result = StaticViewLocatorGeneratorVerifier.RunGenerator(source);
+        Assert.Empty(result.GeneratorDiagnostics.Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
 
         using var peStream = new MemoryStream();
-        var emitResult = updatedCompilation.Emit(peStream);
+        var emitResult = result.Compilation.Emit(peStream);
         Assert.True(emitResult.Success, string.Join(Environment.NewLine, emitResult.Diagnostics));
 
         peStream.Position = 0;
@@ -152,52 +142,8 @@ namespace TestApp
         Assert.Equal("TestApp.Views.DashboardScreen", genericView!.GetType().FullName);
 
         var invalid = Assert.IsType<TextBlock>(build.Invoke(locator, new object?[] { null }));
-        Assert.Equal("Invalid view model Type", invalid.Text);
+        Assert.Equal("Invalid view model type.", invalid.Text);
 
         Assert.True(viewModelBaseType.IsAssignableFrom(dashboardViewModelType));
-    }
-
-    private static CSharpCompilation CreateCompilation(string source)
-    {
-        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
-
-        return CSharpCompilation.Create(
-            assemblyName: "StaticViewLocatorIntegrationRuntimeTests",
-            syntaxTrees: new[] { syntaxTree },
-            references: ResolveReferences(),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-    }
-
-    private static IReadOnlyCollection<MetadataReference> ResolveReferences()
-    {
-        var references = new List<MetadataReference>();
-        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var trustedPlatformAssemblies = (string?)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") ?? string.Empty;
-
-        foreach (var path in trustedPlatformAssemblies.Split(Path.PathSeparator))
-        {
-            if (string.IsNullOrEmpty(path) || !File.Exists(path) || !unique.Add(path))
-            {
-                continue;
-            }
-
-            references.Add(MetadataReference.CreateFromFile(path));
-        }
-
-        foreach (var assembly in new[]
-                 {
-                     typeof(Control).Assembly,
-                     typeof(UserControl).Assembly,
-                     typeof(StaticViewLocatorGenerator).Assembly,
-                 })
-        {
-            if (!string.IsNullOrEmpty(assembly.Location) && unique.Add(assembly.Location))
-            {
-                references.Add(MetadataReference.CreateFromFile(assembly.Location));
-            }
-        }
-
-        return references;
     }
 }

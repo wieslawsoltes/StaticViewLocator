@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -19,33 +20,9 @@ internal static class StaticViewLocatorGeneratorVerifier
         string source,
         IReadOnlyDictionary<string, string>? globalOptions = null)
     {
-        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
-
-        var compilation = CSharpCompilation.Create(
-            assemblyName: "StaticViewLocatorGenerator.Tests",
-            syntaxTrees: new[] { syntaxTree },
-            references: GetMetadataReferences(),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-
-        var generator = new StaticViewLocatorGenerator().AsSourceGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            generators: new[] { generator },
-            additionalTexts: null,
-            parseOptions: parseOptions,
-            optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions));
-
-        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out var diagnostics);
-
-        var failures = diagnostics.Where(static d => d.Severity == DiagnosticSeverity.Error).ToArray();
-        if (failures.Length > 0)
-        {
-            var message = string.Join(Environment.NewLine, failures.Select(static d => d.ToString()));
-            throw new Xunit.Sdk.XunitException($"Generator reported diagnostics:{Environment.NewLine}{message}");
-        }
-
-        var runResult = driver.GetRunResult();
-        var generated = runResult.GeneratedTrees
+        var result = RunGenerator(source, globalOptions);
+        AssertNoErrors(result);
+        var generated = result.RunResult.GeneratedTrees
             .Select(static tree => (HintName: Path.GetFileName(tree.FilePath) ?? string.Empty, Source: tree.GetText().ToString()))
             .ToDictionary(static x => x.HintName, static x => x.Source, StringComparer.Ordinal);
 
@@ -62,33 +39,9 @@ internal static class StaticViewLocatorGeneratorVerifier
         IReadOnlyDictionary<string, string>? globalOptions = null,
         params (string hintName, string source)[] generatedSources)
     {
-        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
-        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
-
-        var compilation = CSharpCompilation.Create(
-            assemblyName: "StaticViewLocatorGenerator.Tests",
-            syntaxTrees: new[] { syntaxTree },
-            references: GetMetadataReferences(),
-            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
-
-        var generator = new StaticViewLocatorGenerator().AsSourceGenerator();
-        GeneratorDriver driver = CSharpGeneratorDriver.Create(
-            generators: new[] { generator },
-            additionalTexts: null,
-            parseOptions: parseOptions,
-            optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions));
-
-        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out var diagnostics);
-
-        var failures = diagnostics.Where(static d => d.Severity == DiagnosticSeverity.Error).ToArray();
-        if (failures.Length > 0)
-        {
-            var message = string.Join(Environment.NewLine, failures.Select(static d => d.ToString()));
-            throw new Xunit.Sdk.XunitException($"Generator reported diagnostics:{Environment.NewLine}{message}");
-        }
-
-        var runResult = driver.GetRunResult();
-        var generated = runResult.GeneratedTrees
+        var result = RunGenerator(source, globalOptions);
+        AssertNoErrors(result);
+        var generated = result.RunResult.GeneratedTrees
             .Select(static tree => (HintName: Path.GetFileName(tree.FilePath) ?? string.Empty, Source: tree.GetText().ToString()))
             .ToDictionary(static x => x.HintName, static x => x.Source, StringComparer.Ordinal);
 
@@ -109,6 +62,64 @@ internal static class StaticViewLocatorGeneratorVerifier
         }
 
         return Task.CompletedTask;
+    }
+
+    public static GeneratorTestResult RunGenerator(
+        string source,
+        IReadOnlyDictionary<string, string>? globalOptions = null)
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Preview);
+        var syntaxTree = CSharpSyntaxTree.ParseText(source, parseOptions);
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "StaticViewLocatorGenerator.Tests",
+            syntaxTrees: new[] { syntaxTree },
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            generators: new[] { new StaticViewLocatorGenerator().AsSourceGenerator() },
+            additionalTexts: null,
+            parseOptions: parseOptions,
+            optionsProvider: new TestAnalyzerConfigOptionsProvider(globalOptions));
+
+        driver = driver.RunGeneratorsAndUpdateCompilation(
+            compilation,
+            out var updatedCompilation,
+            out var generatorDiagnostics);
+        return new GeneratorTestResult(driver.GetRunResult(), updatedCompilation, generatorDiagnostics);
+    }
+
+    private static void AssertNoErrors(GeneratorTestResult result)
+    {
+        var failures = result.GeneratorDiagnostics
+            .Concat(result.Compilation.GetDiagnostics())
+            .Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
+            .ToArray();
+        if (failures.Length == 0)
+        {
+            return;
+        }
+
+        var message = string.Join(Environment.NewLine, failures.Select(static diagnostic => diagnostic.ToString()));
+        throw new Xunit.Sdk.XunitException($"Generated compilation failed:{Environment.NewLine}{message}");
+    }
+
+    internal sealed class GeneratorTestResult
+    {
+        public GeneratorTestResult(
+            GeneratorDriverRunResult runResult,
+            Compilation compilation,
+            ImmutableArray<Diagnostic> generatorDiagnostics)
+        {
+            RunResult = runResult;
+            Compilation = compilation;
+            GeneratorDiagnostics = generatorDiagnostics;
+        }
+
+        public GeneratorDriverRunResult RunResult { get; }
+
+        public Compilation Compilation { get; }
+
+        public ImmutableArray<Diagnostic> GeneratorDiagnostics { get; }
     }
 
     private static string NormalizeExpectedSource(string hintName, string expectedSource)

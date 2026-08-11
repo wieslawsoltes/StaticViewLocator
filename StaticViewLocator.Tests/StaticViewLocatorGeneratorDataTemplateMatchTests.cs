@@ -19,6 +19,7 @@ namespace TestApp.ViewModels
     public sealed class WidgetViewModel<T> { }
 }
 
+
 namespace TestApp.Views
 {
     public sealed class WidgetView : UserControl { }
