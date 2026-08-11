@@ -10,6 +10,119 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorSnapshotTests
 {
     [Fact]
+    public async Task GeneratesFactoriesForConstructorsCallableWithoutArguments()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.ViewModels
+{
+    public sealed class OptionalViewModel { }
+    public sealed class ParamsViewModel { }
+}
+
+namespace TestApp.Views
+{
+    public sealed class OptionalView : UserControl
+    {
+        public OptionalView(string title = "") { }
+    }
+
+    public sealed class ParamsView : UserControl
+    {
+        public ParamsView(params object[] values) { }
+    }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator { }
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(input);
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.Contains("new TestApp.Views.OptionalView()", locatorSource, StringComparison.Ordinal);
+        Assert.Contains("new TestApp.Views.ParamsView()", locatorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GeneratesFactoryWhenLocatorItselfHasPrivateConstructor()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp;
+
+public sealed class DashboardViewModel { }
+
+[StaticViewLocator]
+[StaticViewMapping(typeof(DashboardViewModel), typeof(ViewLocator))]
+public partial class ViewLocator : UserControl
+{
+    private ViewLocator() { }
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(input);
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.Contains("new TestApp.ViewLocator()", locatorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReportsViewWithoutConstructorCallableWithNoArguments()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.ViewModels
+{
+    public sealed class DashboardViewModel
+    {
+    }
+}
+
+namespace TestApp.Views
+{
+    public sealed class DashboardView : UserControl
+    {
+        public DashboardView(string title)
+        {
+        }
+    }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator
+    {
+    }
+}
+""";
+
+        var result = StaticViewLocatorGeneratorVerifier.RunGenerator(input);
+        var diagnostic = Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0004");
+        var locatorSource = result.RunResult.GeneratedTrees
+            .Single(static tree => tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal))
+            .GetText()
+            .ToString();
+
+        Assert.Contains("DashboardView", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.DoesNotContain("new TestApp.Views.DashboardView()", locatorSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "[typeof(TestApp.ViewModels.DashboardViewModel)] = \"Not Found: TestApp.Views.DashboardView\"",
+            locatorSource,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PreservesInternalLocatorAccessibility()
     {
         const string input = """
