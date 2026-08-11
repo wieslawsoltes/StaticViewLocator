@@ -742,6 +742,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
 
         var relevantViewModels = new List<INamedTypeSymbol>();
         var seen = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        var ambiguousViewModels = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         var viewBaseTypes = GetViewBaseTypes(compilation, options);
         var explicitMappings = GetExplicitMappings(locatorSymbol);
         var inferredMappings = GetInferredMappings(
@@ -749,7 +750,8 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
             locatorSymbol,
             viewBaseTypes,
             explicitMappings,
-            diagnostics);
+            diagnostics,
+            ambiguousViewModels);
         if (generateIViewLocator)
         {
             foreach (var mapping in GetReactiveUIMappings(
@@ -757,7 +759,8 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
                          viewBaseTypes,
                          inferredMappings,
                          explicitMappings,
-                         diagnostics))
+                         diagnostics,
+                         ambiguousViewModels))
             {
                 if (!inferredMappings.ContainsKey(mapping.Key))
                 {
@@ -772,7 +775,8 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
 
         foreach (var symbol in viewModelSymbols)
         {
-            if (!IsViewModelCandidate(symbol, compilation, options))
+            if (!IsViewModelCandidate(symbol, compilation, options) ||
+                ambiguousViewModels.Contains(symbol))
             {
                 continue;
             }
@@ -1187,11 +1191,11 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
         INamedTypeSymbol locatorSymbol,
         HashSet<INamedTypeSymbol> viewBaseTypes,
         IReadOnlyDictionary<INamedTypeSymbol, INamedTypeSymbol> explicitMappings,
-        ICollection<Diagnostic> diagnostics)
+        ICollection<Diagnostic> diagnostics,
+        HashSet<INamedTypeSymbol> ambiguousViewModels)
     {
         var contracts = GetViewModelMappingContracts(locatorSymbol);
         var mappings = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
-        var ambiguousViewModels = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
         if (contracts.Count == 0)
         {
             return mappings;
