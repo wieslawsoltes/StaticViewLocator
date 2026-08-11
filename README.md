@@ -277,26 +277,28 @@ You can scope which view model namespaces are considered and opt into additional
 
 ```xml
 <PropertyGroup>
-  <StaticViewLocatorViewModelNamespacePrefixes>MyApp.ViewModels;MyApp.Modules</StaticViewLocatorViewModelNamespacePrefixes>
+  <StaticViewLocatorViewModelNamespacePrefixes>MyApp.ViewModels,MyApp.Modules</StaticViewLocatorViewModelNamespacePrefixes>
   <StaticViewLocatorIncludeInternalViewModels>false</StaticViewLocatorIncludeInternalViewModels>
   <StaticViewLocatorIncludeReferencedAssemblies>false</StaticViewLocatorIncludeReferencedAssemblies>
   <StaticViewLocatorAdditionalViewBaseTypes>MyApp.Controls.ToolWindowBase</StaticViewLocatorAdditionalViewBaseTypes>
   <StaticViewLocatorNamespaceReplacementRules>ViewModels=Views</StaticViewLocatorNamespaceReplacementRules>
-  <StaticViewLocatorTypeNameReplacementRules>ViewModel=View;Vm=Page</StaticViewLocatorTypeNameReplacementRules>
+  <StaticViewLocatorTypeNameReplacementRules>ViewModel=View,Vm=Page</StaticViewLocatorTypeNameReplacementRules>
   <StaticViewLocatorStripGenericArityFromViewName>true</StaticViewLocatorStripGenericArityFromViewName>
   <StaticViewLocatorInterfacePrefixesToStrip>I</StaticViewLocatorInterfacePrefixesToStrip>
 </PropertyGroup>
 ```
 
 Defaults and behavior:
-- `StaticViewLocatorViewModelNamespacePrefixes` uses `;` or `,` separators and defaults to all namespaces.
+- `StaticViewLocatorViewModelNamespacePrefixes` uses comma separators and defaults to all namespaces.
 - `StaticViewLocatorIncludeReferencedAssemblies` defaults to `false`. When `true`, view models from referenced assemblies are included.
 - `StaticViewLocatorIncludeInternalViewModels` defaults to `false`. When `true`, internal view models from referenced assemblies are included only if the referenced assembly exposes them via `InternalsVisibleTo`.
-- `StaticViewLocatorAdditionalViewBaseTypes` uses `;` or `,` separators and extends the default view base type list.
-- `StaticViewLocatorNamespaceReplacementRules` uses `;` or `,` separators with `from=to` pairs and is applied sequentially to the view-model namespace when deriving the target view namespace. The default includes `ViewModels=Views`.
-- `StaticViewLocatorTypeNameReplacementRules` uses `;` or `,` separators with `from=to` pairs and is applied sequentially to the view-model type name when deriving the target view name. The default includes `ViewModel=View`.
+- `StaticViewLocatorAdditionalViewBaseTypes` uses comma separators and extends the default view base type list.
+- `StaticViewLocatorNamespaceReplacementRules` uses comma separators with `from=to` pairs and is applied sequentially to the view-model namespace when deriving the target view namespace. The default includes `ViewModels=Views`.
+- `StaticViewLocatorTypeNameReplacementRules` uses comma separators with `from=to` pairs and is applied sequentially to the view-model type name when deriving the target view name. The default includes `ViewModel=View`.
 - `StaticViewLocatorStripGenericArityFromViewName` defaults to `true`. When enabled, generic arity markers like `` `1 `` are removed from the derived target view name, so `WidgetViewModel<T>` can map to `WidgetView`.
-- `StaticViewLocatorInterfacePrefixesToStrip` uses `;` or `,` separators and is applied to interface view-model names before looking up the target view. The default includes `I`.
+- `StaticViewLocatorInterfacePrefixesToStrip` uses comma separators and is applied to interface view-model names before looking up the target view. The default includes `I`.
+
+Use commas for multi-value MSBuild properties. Semicolons are not supported because Roslyn treats `;` as an EditorConfig comment marker when exporting `CompilerVisibleProperty` values, truncating everything after the first semicolon ([dotnet/roslyn#51692](https://github.com/dotnet/roslyn/issues/51692)).
 
 These properties are exported as `CompilerVisibleProperty` by the package, so analyzers can read them without extra project configuration.
 
