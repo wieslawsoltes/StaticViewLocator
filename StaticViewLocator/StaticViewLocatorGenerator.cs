@@ -853,9 +853,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
             {
                 viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
             }
-            var isSupportedView = viewSymbol is not null &&
-                                  IsSupportedView(viewSymbol, viewBaseTypes) &&
-                                  CanInstantiateView(compilation, viewSymbol, locatorSymbol);
+            var isSupportedView = viewSymbol is not null && IsSupportedView(viewSymbol, viewBaseTypes);
 
             if (viewSymbol is null || !isSupportedView)
             {
@@ -923,9 +921,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
             {
                 viewSymbol = compilation.GetTypeByMetadataName(metadataNameView);
             }
-            var isSupportedView = viewSymbol is not null &&
-                                  IsSupportedView(viewSymbol, viewBaseTypes) &&
-                                  CanInstantiateView(compilation, viewSymbol, locatorSymbol);
+            var isSupportedView = viewSymbol is not null && IsSupportedView(viewSymbol, viewBaseTypes);
 
             if (viewSymbol is not null &&
                 isSupportedView &&
