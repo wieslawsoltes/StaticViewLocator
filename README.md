@@ -298,6 +298,8 @@ Defaults and behavior:
 - `StaticViewLocatorStripGenericArityFromViewName` defaults to `true`. When enabled, generic arity markers like `` `1 `` are removed from the derived target view name, so `WidgetViewModel<T>` can map to `WidgetView`.
 - `StaticViewLocatorInterfacePrefixesToStrip` uses `;` or `,` separators and is applied to interface view-model names before looking up the target view. The default includes `I`.
 
+Replacement targets may be empty. For example, `ViewModel=` removes the `ViewModel` suffix without adding a replacement suffix.
+
 These properties are exported as `CompilerVisibleProperty` by the package, so analyzers can read them without extra project configuration.
 
 ## Generator architecture

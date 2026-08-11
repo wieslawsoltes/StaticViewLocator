@@ -349,7 +349,7 @@ public sealed partial class StaticViewLocatorGenerator : IIncrementalGenerator
             }
 
             var separatorIndex = trimmed.IndexOf('=');
-            if (separatorIndex <= 0 || separatorIndex == trimmed.Length - 1)
+            if (separatorIndex <= 0)
             {
                 continue;
             }

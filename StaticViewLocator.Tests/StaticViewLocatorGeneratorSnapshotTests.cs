@@ -1243,6 +1243,45 @@ public partial class ViewLocator
     }
 
     [Fact]
+    public async Task AppliesEmptyTypeNameReplacement()
+    {
+        const string input = """
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp.ViewModels
+{
+    public sealed class SettingsWindowViewModel { }
+}
+
+namespace TestApp.Windows
+{
+    public sealed class SettingsWindow : UserControl { }
+}
+
+namespace TestApp
+{
+    [StaticViewLocator]
+    public partial class ViewLocator { }
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(
+            input,
+            new Dictionary<string, string>
+            {
+                ["build_property.StaticViewLocatorNamespaceReplacementRules"] = "ViewModels=Windows",
+                ["build_property.StaticViewLocatorTypeNameReplacementRules"] = "ViewModel=",
+            });
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.Contains(
+            "[typeof(TestApp.ViewModels.SettingsWindowViewModel)] = () => new TestApp.Windows.SettingsWindow()",
+            locatorSource,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AppliesConfiguredNamespaceAndTypeReplacementRules()
     {
         const string input = @"
