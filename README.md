@@ -99,8 +99,9 @@ Contract discovery has these constraints:
 - the contract may be an interface or a base class, including one inherited indirectly;
 - discovered views must be concrete, non-generic types from the current compilation;
 - discovered views must derive from `UserControl`, `Window`, or a type configured through `StaticViewLocatorAdditionalViewBaseTypes`;
+- discovered views must be accessible to the locator and expose an accessible constructor callable without arguments;
 - contract discovery happens at compile time and adds no runtime assembly scanning;
-- ambiguous view-model mappings should be resolved with an explicit `[StaticViewMapping]` override.
+- ambiguous configured-contract or automatic ReactiveUI mappings produce `SVL0003` and must be resolved with an explicit `[StaticViewMapping]` override.
 
 Mapping sources are applied in this order, from highest to lowest priority:
 
@@ -119,7 +120,7 @@ private static bool TryCreateViewExact(Type viewModelType, out Control? view)
 
 It performs only an exact dictionary lookup and invokes the statically generated constructor delegate. It does not walk base types or interfaces and does not construct closed generic types at runtime. This is useful when an MVVM framework needs to create a view and then apply its own view-model assignment or lifecycle rules.
 
-If the annotated partial class already declares a compatible `TryCreateViewExact(Type, out Control?)`, the generator reuses it instead of emitting a duplicate helper.
+If the annotated partial class already declares a compatible `TryCreateViewExact(Type, out Control?)` returning `bool`, the generator reuses it instead of emitting a duplicate helper. The source helper may be static or instance-based because generated adapter calls are instance methods.
 
 When a locator supplies its own `Build` method, set `GenerateRuntimeTypeFallbackMethods = false` to omit the legacy `BaseType`, `GetInterfaces()`, and generic-type-definition fallback helpers. If the generator must emit the legacy `Build`, those helpers are always emitted because that implementation depends on them. The generated `IDataTemplate.Build` path uses exact static lookup and does not emit these runtime type-walking helpers unless a source-declared `Build(object?)` requires them and the option remains enabled.
 
@@ -143,7 +144,7 @@ public partial class ViewLocator
 
 `GenerateIViewLocator = true` requires the consumer project to reference ReactiveUI. It automatically discovers concrete Avalonia views implementing `ReactiveUI.IViewFor<TViewModel>`, so `ViewModelMappingContracts = new[] { typeof(IViewFor<>) }` and `GenerateViewFactoryMethods = true` are not required for this mode. User-configured `ViewModelMappingContracts` take precedence over this automatic ReactiveUI inference, while `[StaticViewMapping]` remains the final override. The generated locator implements all four current ReactiveUI resolution overloads. Runtime-instance resolution assigns `IViewFor.ViewModel`; non-null contracts return `null` because the generated map is currently unkeyed.
 
-`GenerateIDataTemplate = true` adds `IDataTemplate`, `Build(object?)`, and `Match(object?)`. `DataTemplateMatchTypes` provides a fast application-specific match predicate. If it is empty, the generated `Match` checks the statically generated view and missing-view maps using the same exact-type semantics as generated `Build`.
+`GenerateIDataTemplate = true` adds `IDataTemplate`, `Control? Build(object?)`, and `Match(object?)`. `DataTemplateMatchTypes` provides a fast application-specific match predicate. If it is empty, the generated `Match` checks the statically generated view and missing-view maps using the same exact-type semantics as generated `Build`.
 
 The generated `Build` pipeline is:
 
@@ -152,7 +153,7 @@ The generated `Build` pipeline is:
 3. `BuildFallbackView(param)` for application-specific fallback cases.
 4. `BuildMissingView(param, viewModelType)` for the final not-found control.
 
-For non-sealed locator classes, default hook implementations are generated as `protected virtual`, allowing normal subclass overrides. For sealed locator classes the generated defaults are `private`, because virtual members are illegal on sealed types. In both cases, a hook with the corresponding by-value `object?`-based signature declared directly in the annotated partial class suppresses generation of that default hook; unrelated or `ref`/`in`/`out` overloads do not suppress it. This allows application-specific behavior without replacing the public generated `Build` method. For example, a Dock-style context fallback can be implemented as:
+For non-sealed locator classes, default hook implementations are generated as `protected virtual`, allowing normal subclass overrides. For sealed locator classes the generated defaults are `private`, because virtual members are illegal on sealed types. In both cases, a hook with the corresponding by-value `object?`-based signature declared directly in the annotated partial class suppresses generation of that default hook; unrelated or `ref`/`in`/`out` overloads do not suppress it. A custom hook return type must be implicitly convertible to `Control?`. This allows application-specific behavior without replacing the public generated `Build` method. For example, a Dock-style context fallback can be implemented as:
 
 ```csharp
 [StaticViewLocator(
@@ -183,7 +184,19 @@ public partial class ViewLocator
 
 The generator assembly itself does not reference ReactiveUI. ReactiveUI types are referenced only in generated consumer source when `GenerateIViewLocator` is enabled.
 
+Source-declared public adapter methods are reused only when they implement the corresponding framework contract: public instance accessibility, by-value parameters, the expected return type, and the ReactiveUI `where TViewModel : class` constraint. A same-signature member that cannot implement the contract produces `SVL0002` rather than silently suppressing required generated code.
+
 A complete Avalonia + ReactiveUI example is available in `StaticViewLocatorReactiveUIDemo`. It displays the same navigation state through two side-by-side paths: an Avalonia `ContentControl` using the generated `IDataTemplate`, and a ReactiveUI `ViewModelViewHost` whose `ViewLocator` is the generated locator. The sample also demonstrates the context-wrapper fallback without runtime view scanning.
+
+### Generator diagnostics
+
+| ID | Severity | Meaning |
+| --- | --- | --- |
+| `SVL0001` | Error | A requested adapter contract type is not referenced. |
+| `SVL0002` | Error | A source member collides with a generated adapter member but has an incompatible contract. |
+| `SVL0003` | Error | More than one inferred view maps to the same view model. |
+| `SVL0004` | Error | A mapped view is inaccessible, abstract, or has no accessible constructor callable without arguments. |
+| `SVL0005` | Error | The annotated locator is nested, static, file-local, or not partial. |
 
 ### Attribute options
 
@@ -269,6 +282,10 @@ Defaults and behavior:
 
 These properties are exported as `CompilerVisibleProperty` by the package, so analyzers can read them without extra project configuration.
 
+## Generator architecture
+
+The incremental pipeline remains split into the original source view-model discovery, analyzer-option ingestion, optional referenced-assembly discovery, locator discovery, and per-locator emission stages. Mapping normalization applies conventions and configured contracts first, then automatic ReactiveUI discovery, then explicit overrides. Adapter analysis is isolated in `StaticViewLocatorGenerator.Adapters.cs`; it validates framework symbols and source-member compatibility before emitting `IDataTemplate` or `IViewLocator` members. Every test-helper generation run compiles the resulting syntax trees, so snapshot assertions cannot pass while generated code is invalid.
+
 ## Supported resolution features
 
 - Exact type mapping
@@ -303,6 +320,7 @@ Default view base types:
 Accessibility rules:
 - View models in the current compilation are always eligible (subject to namespace prefixes).
 - Referenced assembly view models must be public unless `StaticViewLocatorIncludeInternalViewModels` is enabled and `InternalsVisibleTo` is configured.
+- Locator classes may be public or internal, including in the global namespace, but must be top-level, non-static, non-file-local, and partial.
 
 ## License
 
