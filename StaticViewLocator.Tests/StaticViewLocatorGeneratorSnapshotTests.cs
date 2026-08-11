@@ -8,6 +8,27 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorSnapshotTests
 {
     [Fact]
+    public async Task PreservesInternalLocatorAccessibility()
+    {
+        const string input = """
+using StaticViewLocator;
+
+namespace TestApp;
+
+[StaticViewLocator]
+internal partial class ViewLocator
+{
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(input);
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.Contains("internal partial class ViewLocator", locatorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("public partial class ViewLocator", locatorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task InfersMappingFromConfiguredGenericContractAndGeneratesFactoryMethod()
     {
         const string input = """
