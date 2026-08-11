@@ -52,7 +52,9 @@ internal static class StaticViewLocatorGeneratorVerifier
                 throw new Xunit.Sdk.XunitException($"Generator did not produce hint '{hintName}'. Generated hints: {string.Join(", ", generated.Keys)}");
             }
 
-            Assert.Equal(NormalizeExpectedSource(hintName, expectedSource), actualSource);
+            Assert.Equal(
+                NormalizeLineEndings(NormalizeExpectedSource(hintName, expectedSource)),
+                NormalizeLineEndings(actualSource));
         }
 
         var unexpected = generated.Keys.Except(generatedSources.Select(static g => g.hintName), StringComparer.Ordinal).ToArray();
@@ -142,6 +144,13 @@ internal static class StaticViewLocatorGeneratorVerifier
             "    public Type[] DataTemplateMatchTypes { get; set; } = Array.Empty<Type>();";
 
         return expectedSource.Replace(existing, extended, StringComparison.Ordinal);
+    }
+
+    private static string NormalizeLineEndings(string source)
+    {
+        return source
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
     }
 
     private sealed class TestAnalyzerConfigOptionsProvider : AnalyzerConfigOptionsProvider
