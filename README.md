@@ -11,7 +11,7 @@ A C# source generator that automatically implements static view locator for Aval
 Add NuGet package reference to project.
 
 ```xml
-<PackageReference Include="StaticViewLocator" Version="0.5.0">
+<PackageReference Include="StaticViewLocator" Version="0.6.0">
   <PrivateAssets>all</PrivateAssets>
   <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
 </PackageReference>
