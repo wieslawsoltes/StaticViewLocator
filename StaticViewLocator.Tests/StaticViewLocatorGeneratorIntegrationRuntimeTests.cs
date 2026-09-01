@@ -88,6 +88,12 @@ namespace TestApp
                 ? new Border { Tag = "context-fallback" }
                 : null;
         }
+
+        protected virtual bool MatchDataTemplate(object? data)
+        {
+            return data is ViewModels.ContextHost ||
+                   TryGetResolvedViewFactory(data, out _);
+        }
     }
 }
 """;

@@ -8,7 +8,7 @@ namespace StaticViewLocator.Tests;
 public class StaticViewLocatorGeneratorDataTemplateMatchTests
 {
     [Fact]
-    public async Task DefaultGeneratedMatchUsesSameExactSemanticsAsGeneratedBuild()
+    public async Task DefaultGeneratedMatchRequiresAResolvedViewFactory()
     {
         const string source = """
 using Avalonia.Controls;
@@ -16,7 +16,8 @@ using StaticViewLocator;
 
 namespace TestApp.ViewModels
 {
-    public sealed class WidgetViewModel<T> { }
+    public abstract class WidgetViewModelBase { }
+    public sealed class WidgetViewModel<T> : WidgetViewModelBase { }
 }
 
 
@@ -27,6 +28,7 @@ namespace TestApp.Views
 
 namespace TestApp
 {
+    [StaticViewMapping(typeof(ViewModels.WidgetViewModelBase), typeof(Views.WidgetView))]
     [StaticViewLocator(GenerateIDataTemplate = true)]
     public partial class ViewLocator { }
 }
@@ -40,9 +42,42 @@ namespace TestApp
             locatorSource,
             StringComparison.Ordinal);
         Assert.Contains(
-            "return s_views.ContainsKey(type) || s_missingViews.ContainsKey(type);",
+            "instance is TestApp.ViewModels.WidgetViewModelBase",
             locatorSource,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "return TryGetResolvedViewFactory(data, out _);",
+            locatorSource,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("s_missingViews.ContainsKey", locatorSource, StringComparison.Ordinal);
         Assert.DoesNotContain("GetGenericTypeDefinition()", locatorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CustomMissingViewHookOmitsTheMissingViewTable()
+    {
+        const string source = """
+using System;
+using Avalonia.Controls;
+using StaticViewLocator;
+
+namespace TestApp;
+
+public sealed class UnresolvedViewModel { }
+
+[StaticViewLocator(
+    GenerateIDataTemplate = true,
+    GenerateRuntimeTypeFallbackMethods = false)]
+public partial class ViewLocator
+{
+    protected virtual Control? BuildMissingView(object? data, Type type) => null;
+}
+""";
+
+        var generated = await StaticViewLocatorGeneratorVerifier.GetGeneratedSourcesAsync(source);
+        var locatorSource = generated["ViewLocator_StaticViewLocator.cs"];
+
+        Assert.DoesNotContain("s_missingViews", locatorSource, StringComparison.Ordinal);
+        Assert.Contains("return BuildMissingView(param, viewModelType);", locatorSource, StringComparison.Ordinal);
     }
 }

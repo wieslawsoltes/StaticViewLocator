@@ -137,6 +137,7 @@ using StaticViewLocator;
     GenerateIViewLocator = true,
     GenerateIDataTemplate = true,
     GenerateRuntimeTypeFallbackMethods = false,
+    GeneratedAdapterResolutionMode = ViewResolutionMode.ExactThenBaseTypesThenInterfaces,
     DataTemplateMatchTypes = new[] { typeof(ViewModelBase) })]
 public partial class ViewLocator
 {
@@ -156,7 +157,21 @@ ReactiveUI 24 is available in two mutually exclusive distribution families. Choo
 
 Do not reference packages from both rows in the same application. StaticViewLocator supports either mode without a generator option because its generated adapter uses only the distribution-neutral contracts `ReactiveUI.IViewFor`, `ReactiveUI.IViewFor<TViewModel>`, and `ReactiveUI.IViewLocator`. Only application code that uses concrete types such as `ReactiveObject`, `ReactiveCommand`, `ViewModelViewHost`, or `UseReactiveUI` needs the namespace from the selected distribution.
 
-`GenerateIDataTemplate = true` adds `IDataTemplate`, `Control? Build(object?)`, and `Match(object?)`. `DataTemplateMatchTypes` provides a fast application-specific match predicate. If it is empty, the generated `Match` checks the statically generated view and missing-view maps using the same exact-type semantics as generated `Build`.
+`GenerateIDataTemplate = true` adds `IDataTemplate`, `Control? Build(object?)`, and `Match(object?)`. The generated adapters share a statically emitted resolver. Its hot path is one `data.GetType()` call and an exact dictionary lookup, followed only when needed by generated `data is MappedBaseType` or `data is IMappedContract` branches. It does not walk `BaseType`, call `GetInterfaces` or `IsAssignableFrom`, transform names, scan assemblies, probe factories, or construct a control from `Match`.
+
+`Match` returns `true` only when that resolver finds a real view factory. Entries in the missing-view diagnostic map never count as matches. `DataTemplateMatchTypes` is an additional generated `data is T` filter over resolved models; it cannot make an unresolved model match.
+
+`GeneratedAdapterResolutionMode` controls compile-time fallback policy for both generated adapters:
+
+| Mode | Generated resolution order |
+| --- | --- |
+| `Exact` | Exact runtime type only. |
+| `ExactThenBaseTypes` | Exact type, then nearest mapped base class. |
+| `ExactThenInterfaces` | Exact type, then nearest mapped interface. |
+| `ExactThenBaseTypesThenInterfaces` | Exact type, mapped bases, then mapped interfaces. This is the default and preserves the established base-before-interface precedence. |
+| `ExactThenInterfacesThenBaseTypes` | Exact type, mapped interfaces, then mapped bases. |
+
+For concrete model types visible to the compilation, inherited or interface results are flattened into exact dictionary entries. Runtime type-test branches cover types that cannot be enumerated at compile time. Interface branches have deterministic ordering; when a discovered concrete type has equally applicable interfaces mapped to different views, `SVL0007` requires an explicit `[StaticViewMapping]`. For an open generic model mapping, the generator first tries to infer an unambiguous non-generic base class or interface contract that resolves to the same view, then emits a legal closed-instance type test for that contract. A conflicting or overly broad contract is not inferred. If no safe mapped or inferred contract exists, it reports `SVL0008` instead of adding a reflective fallback.
 
 The generated `Build` pipeline is:
 
@@ -177,6 +192,7 @@ public interface IContextHost
     GenerateIViewLocator = true,
     GenerateIDataTemplate = true,
     GenerateRuntimeTypeFallbackMethods = false,
+    GeneratedAdapterResolutionMode = ViewResolutionMode.ExactThenBaseTypesThenInterfaces,
     DataTemplateMatchTypes = new[] { typeof(ViewModelBase), typeof(IContextHost) })]
 public partial class ViewLocator
 {
@@ -196,8 +212,15 @@ public partial class ViewLocator
             new Binding(nameof(IContextHost.Context)));
         return contentControl;
     }
+
+    protected virtual bool MatchDataTemplate(object? data)
+    {
+        return data is IContextHost || TryGetResolvedViewFactory(data, out _);
+    }
 }
 ```
+
+The custom match hook is intentional in this example: specialized fallback objects are not real generated mappings, so the default resolved-only `Match` does not claim them. Custom `BuildResolvedView`, `BuildFallbackView`, `BuildMissingView`, and `MatchDataTemplate` hooks remain available for policies that do not fit the generated resolver.
 
 The generator assembly itself does not reference ReactiveUI. Distribution-neutral ReactiveUI contract types are referenced only in generated consumer source when `GenerateIViewLocator` is enabled.
 
@@ -215,6 +238,8 @@ The solution builds the same complete AXAML sample against both distributions. `
 | `SVL0004` | Error | A mapped view is inaccessible, abstract, or has no accessible constructor callable without arguments. |
 | `SVL0005` | Error | The annotated locator is nested, static, file-local, or not partial. |
 | `SVL0006` | Error | A configured mapping contract is not an open generic interface or class with exactly one type parameter. |
+| `SVL0007` | Error | Equally applicable mapped interfaces resolve a discovered model to different views; add an explicit mapping. |
+| `SVL0008` | Error | An open generic adapter mapping has no safe mapped or inferred non-generic base/interface contract for a compiled type test. |
 
 ### Attribute options
 
@@ -224,14 +249,15 @@ The solution builds the same complete AXAML sample against both distributions. `
 | `GenerateRuntimeTypeFallbackMethods` | `true` | Emits base/interface/open-generic runtime fallback helpers when a legacy or source-declared `Build` path needs them; generated `IDataTemplate.Build` does not require them. |
 | `GenerateIViewLocator` | `false` | Generates ReactiveUI `IViewLocator`, all four `ResolveView` overloads, and automatic `IViewFor<TViewModel>` compile-time mappings. Requires a ReactiveUI reference in the consumer project. |
 | `GenerateIDataTemplate` | `false` | Generates Avalonia `IDataTemplate`, `Build`, `Match`, and customizable build hooks. |
+| `GeneratedAdapterResolutionMode` | `ExactThenBaseTypesThenInterfaces` | Selects the exact/base/interface precedence compiled into both generated adapters. |
 | `ViewModelMappingContracts` | empty | Infers mappings from configured open generic contracts with one type parameter. |
-| `DataTemplateMatchTypes` | empty | Types accepted by generated `Match`; when empty, generated maps are checked using exact runtime type. |
+| `DataTemplateMatchTypes` | empty | Additional generated type filter applied only after a real factory resolves. |
 
 `[StaticViewMapping(typeof(TViewModel), typeof(TView))]` is repeatable and is the final override for a mapped view model. It also admits model types whose names do not end in `ViewModel`.
 
 The generator emits:
 - `s_views`: resolved mappings from `Type` to `Func<Control>`
-- `s_missingViews`: unresolved mappings used for `"Not Found: ..."` fallback text
+- `s_missingViews`: unresolved mappings used for `"Not Found: ..."` fallback text when the generator emits the default or legacy missing-view path; omitted when a generated adapter supplies a custom `BuildMissingView`
 - optional exact factory creation through `TryCreateViewExact`
 - optional generated ReactiveUI `IViewLocator`
 - optional generated Avalonia `IDataTemplate`
@@ -243,7 +269,11 @@ By default, the legacy generated lookup order is:
 3. base type chain
 4. implemented interfaces in reverse order
 
-The generated `IViewLocator` and generated `IDataTemplate.Build` paths intentionally use exact static lookup. This keeps their resolution predictable and avoids the runtime type walking used by the legacy `Build` implementation.
+The generated `IViewLocator` and generated `IDataTemplate` paths use the configured compile-time resolver and never call the legacy runtime walkers. `GenerateRuntimeTypeFallbackMethods` continues to preserve those walkers only for a source-declared or legacy `Build` implementation that explicitly retains them.
+
+### Migration note: resolved-only template matching
+
+Generated `IDataTemplate.Match` no longer treats an unresolved model or a missing-view diagnostic entry as a match. A `DataTemplateMatchTypes` entry also no longer broadens matching to unresolved objects. Applications that intentionally build a specialized fallback must declare a `MatchDataTemplate` hook for that fallback, as shown above. Applications that previously depended on runtime base/interface walking should select the corresponding `GeneratedAdapterResolutionMode`; the walk is emitted as compile-time exact mappings and type-test branches rather than reflective runtime traversal.
 
 Source generator will generate mappings using convention-based transforms. By default:
 - namespace `ViewModels` becomes `Views`

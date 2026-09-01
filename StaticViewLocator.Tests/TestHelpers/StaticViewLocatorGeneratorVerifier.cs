@@ -126,24 +126,52 @@ internal static class StaticViewLocatorGeneratorVerifier
 
     private static string NormalizeExpectedSource(string hintName, string expectedSource)
     {
-        if (!string.Equals(hintName, "StaticViewLocatorAttribute.cs", StringComparison.Ordinal) ||
-            expectedSource.Contains("GenerateIViewLocator", StringComparison.Ordinal))
+        if (!string.Equals(hintName, "StaticViewLocatorAttribute.cs", StringComparison.Ordinal))
         {
             return expectedSource;
         }
 
         var newLine = expectedSource.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        var existing =
-            $"    public bool GenerateRuntimeTypeFallbackMethods {{ get; set; }} = true;{newLine}{newLine}" +
-            "    public Type[] ViewModelMappingContracts { get; set; } = Array.Empty<Type>();";
-        var extended =
-            $"    public bool GenerateRuntimeTypeFallbackMethods {{ get; set; }} = true;{newLine}{newLine}" +
-            $"    public bool GenerateIViewLocator {{ get; set; }}{newLine}{newLine}" +
-            $"    public bool GenerateIDataTemplate {{ get; set; }}{newLine}{newLine}" +
-            $"    public Type[] ViewModelMappingContracts {{ get; set; }} = Array.Empty<Type>();{newLine}{newLine}" +
-            "    public Type[] DataTemplateMatchTypes { get; set; } = Array.Empty<Type>();";
+        var result = expectedSource;
+        if (!result.Contains("public enum ViewResolutionMode", StringComparison.Ordinal))
+        {
+            var marker = $"namespace StaticViewLocator;{newLine}{newLine}";
+            var enumSource =
+                $"public enum ViewResolutionMode{newLine}" +
+                $"{{{newLine}" +
+                $"    Exact,{newLine}" +
+                $"    ExactThenBaseTypes,{newLine}" +
+                $"    ExactThenInterfaces,{newLine}" +
+                $"    ExactThenBaseTypesThenInterfaces,{newLine}" +
+                $"    ExactThenInterfacesThenBaseTypes,{newLine}" +
+                $"}}{newLine}{newLine}";
+            result = result.Replace(marker, marker + enumSource, StringComparison.Ordinal);
+        }
 
-        return expectedSource.Replace(existing, extended, StringComparison.Ordinal);
+        if (!result.Contains("GenerateIViewLocator", StringComparison.Ordinal))
+        {
+            var existing =
+                $"    public bool GenerateRuntimeTypeFallbackMethods {{ get; set; }} = true;{newLine}{newLine}" +
+                "    public Type[] ViewModelMappingContracts { get; set; } = Array.Empty<Type>();";
+            var extended =
+                $"    public bool GenerateRuntimeTypeFallbackMethods {{ get; set; }} = true;{newLine}{newLine}" +
+                $"    public bool GenerateIViewLocator {{ get; set; }}{newLine}{newLine}" +
+                $"    public bool GenerateIDataTemplate {{ get; set; }}{newLine}{newLine}" +
+                $"    public Type[] ViewModelMappingContracts {{ get; set; }} = Array.Empty<Type>();{newLine}{newLine}" +
+                "    public Type[] DataTemplateMatchTypes { get; set; } = Array.Empty<Type>();";
+            result = result.Replace(existing, extended, StringComparison.Ordinal);
+        }
+
+        if (!result.Contains("GeneratedAdapterResolutionMode", StringComparison.Ordinal))
+        {
+            var marker = $"    public bool GenerateIDataTemplate {{ get; set; }}{newLine}{newLine}";
+            var property =
+                $"    public ViewResolutionMode GeneratedAdapterResolutionMode {{ get; set; }} ={newLine}" +
+                $"        ViewResolutionMode.ExactThenBaseTypesThenInterfaces;{newLine}{newLine}";
+            result = result.Replace(marker, marker + property, StringComparison.Ordinal);
+        }
+
+        return result;
     }
 
     private static string NormalizeLineEndings(string source)

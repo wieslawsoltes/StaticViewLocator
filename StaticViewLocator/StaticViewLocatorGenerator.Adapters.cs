@@ -69,6 +69,33 @@ public sealed partial class StaticViewLocatorGenerator
         isEnabledByDefault: true,
         description: "Configured contract discovery requires an open generic interface or class with exactly one type parameter.");
 
+    private static readonly DiagnosticDescriptor AmbiguousFallbackMapping = new(
+        id: "SVL0007",
+        title: "Fallback view mapping is ambiguous",
+        messageFormat: "View model '{0}' inherits multiple mapped interfaces ({1}); add StaticViewMappingAttribute to select one view",
+        category: "StaticViewLocator.Generation",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Compile-time fallback resolution requires a single deterministic mapped interface.");
+
+    private static readonly DiagnosticDescriptor UnsupportedOpenGenericAdapterMapping = new(
+        id: "SVL0008",
+        title: "Open generic adapter mapping has no compiled fallback contract",
+        messageFormat: "Open generic view model '{0}' requires a safe non-generic base class or interface contract for generated adapter resolution",
+        category: "StaticViewLocator.Generation",
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true,
+        description: "Generated adapters cannot test an arbitrary closed generic instance against an open generic type without reflection; a mapped or unambiguous inferred non-generic contract is required.");
+
+    private enum AdapterResolutionMode
+    {
+        Exact,
+        ExactThenBaseTypes,
+        ExactThenInterfaces,
+        ExactThenBaseTypesThenInterfaces,
+        ExactThenInterfacesThenBaseTypes,
+    }
+
     private static Dictionary<INamedTypeSymbol, INamedTypeSymbol> GetReactiveUIMappings(
         Compilation compilation,
         HashSet<INamedTypeSymbol> viewBaseTypes,
@@ -588,6 +615,434 @@ public sealed partial class StaticViewLocatorGenerator
         return ImmutableArray<ITypeSymbol>.Empty;
     }
 
+    private static AdapterResolutionMode GetGeneratedAdapterResolutionMode(INamedTypeSymbol locatorSymbol)
+    {
+        var locatorAttribute = locatorSymbol.GetAttributes()
+            .FirstOrDefault(attribute => attribute.AttributeClass?.ToDisplayString() == StaticViewLocatorAttributeDisplayString);
+        if (locatorAttribute is not null)
+        {
+            foreach (var argument in locatorAttribute.NamedArguments)
+            {
+                if (argument.Key == "GeneratedAdapterResolutionMode" && argument.Value.Value is int value &&
+                    Enum.IsDefined(typeof(AdapterResolutionMode), value))
+                {
+                    return (AdapterResolutionMode)value;
+                }
+            }
+        }
+
+        return AdapterResolutionMode.ExactThenBaseTypesThenInterfaces;
+    }
+
+    private static void AddCompileTimeFallbackMappings(
+        INamedTypeSymbol locatorSymbol,
+        IReadOnlyList<INamedTypeSymbol> relevantViewModels,
+        List<ResolvedViewMapping> resolvedMappings,
+        HashSet<INamedTypeSymbol> resolvedViewModels,
+        ICollection<Diagnostic> diagnostics)
+    {
+        var mode = GetGeneratedAdapterResolutionMode(locatorSymbol);
+        var mappedViews = new Dictionary<INamedTypeSymbol, INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        foreach (var mapping in resolvedMappings)
+        {
+            mappedViews[mapping.ViewModelType] = mapping.ViewType;
+        }
+
+        AddInferredOpenGenericContracts(
+            mode,
+            relevantViewModels,
+            resolvedMappings,
+            resolvedViewModels,
+            mappedViews);
+
+        foreach (var viewModelType in relevantViewModels)
+        {
+            if (viewModelType.TypeKind == TypeKind.Class &&
+                viewModelType.IsGenericType &&
+                !HasConstructedGenericArguments(viewModelType) &&
+                mappedViews.ContainsKey(viewModelType))
+            {
+                var validation = ValidateOpenGenericAdapterMapping(
+                    viewModelType,
+                    mappedViews[viewModelType],
+                    mappedViews,
+                    mode,
+                    diagnostics);
+                if (validation == false)
+                {
+                    diagnostics.Add(Diagnostic.Create(
+                        UnsupportedOpenGenericAdapterMapping,
+                        GetDiagnosticLocation(viewModelType),
+                        viewModelType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
+                }
+
+                continue;
+            }
+
+            if (resolvedViewModels.Contains(viewModelType) ||
+                viewModelType.TypeKind != TypeKind.Class ||
+                viewModelType.IsAbstract ||
+                mode == AdapterResolutionMode.Exact)
+            {
+                continue;
+            }
+
+            INamedTypeSymbol? baseView = null;
+            for (var current = viewModelType.BaseType; current is not null; current = current.BaseType)
+            {
+                if (mappedViews.TryGetValue(current, out baseView))
+                {
+                    break;
+                }
+            }
+
+            var interfaceCandidates = viewModelType.AllInterfaces
+                .Where(mappedViews.ContainsKey)
+                .Where(candidate => !viewModelType.AllInterfaces.Any(other =>
+                    !SymbolEqualityComparer.Default.Equals(candidate, other) &&
+                    other.AllInterfaces.Contains(candidate, SymbolEqualityComparer.Default) &&
+                    mappedViews.ContainsKey(other)))
+                .OrderBy(static type => type.ToDisplayString(), StringComparer.Ordinal)
+                .ToArray();
+
+            INamedTypeSymbol? selectedView = null;
+            var interfaceMappingIsAmbiguous = false;
+            switch (mode)
+            {
+                case AdapterResolutionMode.ExactThenBaseTypes:
+                    selectedView = baseView;
+                    break;
+                case AdapterResolutionMode.ExactThenInterfaces:
+                    selectedView = SelectInterfaceView();
+                    break;
+                case AdapterResolutionMode.ExactThenBaseTypesThenInterfaces:
+                    selectedView = baseView ?? SelectInterfaceView();
+                    break;
+                case AdapterResolutionMode.ExactThenInterfacesThenBaseTypes:
+                    selectedView = SelectInterfaceView();
+                    if (selectedView is null && !interfaceMappingIsAmbiguous)
+                    {
+                        selectedView = baseView;
+                    }
+                    break;
+            }
+
+            if (selectedView is null)
+            {
+                continue;
+            }
+
+            resolvedMappings.Add(new ResolvedViewMapping(viewModelType, selectedView));
+            resolvedViewModels.Add(viewModelType);
+            mappedViews[viewModelType] = selectedView;
+
+            INamedTypeSymbol? SelectInterfaceView()
+            {
+                if (interfaceCandidates.Length == 0)
+                {
+                    return null;
+                }
+
+                var distinctViews = interfaceCandidates
+                    .Select(candidate => mappedViews[candidate])
+                    .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
+                    .ToArray();
+                if (distinctViews.Length == 1)
+                {
+                    return distinctViews[0];
+                }
+
+                interfaceMappingIsAmbiguous = true;
+                diagnostics.Add(Diagnostic.Create(
+                    AmbiguousFallbackMapping,
+                    GetDiagnosticLocation(viewModelType),
+                    viewModelType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                    string.Join(", ", interfaceCandidates.Select(static type =>
+                        type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)))));
+                return null;
+            }
+        }
+    }
+
+    private static void AddInferredOpenGenericContracts(
+        AdapterResolutionMode mode,
+        IReadOnlyList<INamedTypeSymbol> relevantViewModels,
+        List<ResolvedViewMapping> resolvedMappings,
+        HashSet<INamedTypeSymbol> resolvedViewModels,
+        IDictionary<INamedTypeSymbol, INamedTypeSymbol> mappedViews)
+    {
+        if (mode == AdapterResolutionMode.Exact)
+        {
+            return;
+        }
+
+        var originalMappings = resolvedMappings.ToArray();
+        var openGenericMappings = originalMappings
+            .Where(static mapping =>
+                mapping.ViewModelType.TypeKind == TypeKind.Class &&
+                mapping.ViewModelType.IsGenericType &&
+                !HasConstructedGenericArguments(mapping.ViewModelType))
+            .ToArray();
+
+        foreach (var mapping in openGenericMappings)
+        {
+            var baseContract = GetCompatibleBaseContract(mapping);
+            var interfaceContract = GetCompatibleInterfaceContract(mapping);
+            var selectedContract = mode switch
+            {
+                AdapterResolutionMode.ExactThenBaseTypes => baseContract,
+                AdapterResolutionMode.ExactThenInterfaces => interfaceContract,
+                AdapterResolutionMode.ExactThenBaseTypesThenInterfaces => baseContract ?? interfaceContract,
+                AdapterResolutionMode.ExactThenInterfacesThenBaseTypes => interfaceContract ?? baseContract,
+                _ => null,
+            };
+
+            if (selectedContract is null || mappedViews.ContainsKey(selectedContract))
+            {
+                continue;
+            }
+
+            resolvedMappings.Add(new ResolvedViewMapping(selectedContract, mapping.ViewType));
+            resolvedViewModels.Add(selectedContract);
+            mappedViews[selectedContract] = mapping.ViewType;
+
+            INamedTypeSymbol? GetCompatibleBaseContract(ResolvedViewMapping openGenericMapping)
+            {
+                for (var current = openGenericMapping.ViewModelType.BaseType;
+                     current is not null;
+                     current = current.BaseType)
+                {
+                    if (current.IsGenericType || current.SpecialType == SpecialType.System_Object)
+                    {
+                        continue;
+                    }
+
+                    return IsCompatibleContract(current, openGenericMapping.ViewType)
+                        ? current
+                        : null;
+                }
+
+                return null;
+            }
+
+            INamedTypeSymbol? GetCompatibleInterfaceContract(ResolvedViewMapping openGenericMapping)
+            {
+                return openGenericMapping.ViewModelType.AllInterfaces
+                    .Where(static type => !type.IsGenericType)
+                    .Where(candidate => !openGenericMapping.ViewModelType.AllInterfaces.Any(other =>
+                        !SymbolEqualityComparer.Default.Equals(candidate, other) &&
+                        other.AllInterfaces.Contains(candidate, SymbolEqualityComparer.Default)))
+                    .Where(candidate => IsCompatibleContract(candidate, openGenericMapping.ViewType))
+                    .OrderByDescending(static type => GetInterfaceDepth(type))
+                    .ThenBy(static type => type.ToDisplayString(), StringComparer.Ordinal)
+                    .FirstOrDefault();
+            }
+
+            bool IsCompatibleContract(INamedTypeSymbol contract, INamedTypeSymbol targetView)
+            {
+                if (mappedViews.TryGetValue(contract, out var existingView))
+                {
+                    return SymbolEqualityComparer.Default.Equals(existingView, targetView);
+                }
+
+                return relevantViewModels
+                    .Where(candidate => IsAssignableToContract(candidate, contract))
+                    .All(candidate =>
+                        mappedViews.TryGetValue(candidate, out var candidateView) &&
+                        SymbolEqualityComparer.Default.Equals(candidateView, targetView));
+            }
+        }
+    }
+
+    private static bool IsAssignableToContract(INamedTypeSymbol type, INamedTypeSymbol contract)
+    {
+        if (SymbolEqualityComparer.Default.Equals(type, contract))
+        {
+            return true;
+        }
+
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            if (SymbolEqualityComparer.Default.Equals(current, contract))
+            {
+                return true;
+            }
+        }
+
+        return type.AllInterfaces.Contains(contract, SymbolEqualityComparer.Default);
+    }
+
+    private static bool? ValidateOpenGenericAdapterMapping(
+        INamedTypeSymbol viewModelType,
+        INamedTypeSymbol targetView,
+        IReadOnlyDictionary<INamedTypeSymbol, INamedTypeSymbol> mappedViews,
+        AdapterResolutionMode mode,
+        ICollection<Diagnostic> diagnostics)
+    {
+        INamedTypeSymbol? selectedBaseView = null;
+        for (var current = viewModelType.BaseType; current is not null; current = current.BaseType)
+        {
+            if (!current.IsGenericType &&
+                mappedViews.TryGetValue(current, out selectedBaseView))
+            {
+                break;
+            }
+        }
+
+        var interfaceCandidates = viewModelType.AllInterfaces
+            .Where(type => !type.IsGenericType && mappedViews.ContainsKey(type))
+            .Where(candidate => !viewModelType.AllInterfaces.Any(other =>
+                !SymbolEqualityComparer.Default.Equals(candidate, other) &&
+                other.AllInterfaces.Contains(candidate, SymbolEqualityComparer.Default) &&
+                mappedViews.ContainsKey(other)))
+            .OrderBy(static type => type.ToDisplayString(), StringComparer.Ordinal)
+            .ToArray();
+        var distinctInterfaceViews = interfaceCandidates
+            .Select(candidate => mappedViews[candidate])
+            .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
+            .ToArray();
+        var interfaceIsSelected = mode == AdapterResolutionMode.ExactThenInterfaces ||
+                                  (mode == AdapterResolutionMode.ExactThenInterfacesThenBaseTypes &&
+                                   interfaceCandidates.Length > 0) ||
+                                  (mode == AdapterResolutionMode.ExactThenBaseTypesThenInterfaces &&
+                                   selectedBaseView is null);
+        if (interfaceIsSelected && distinctInterfaceViews.Length > 1)
+        {
+            diagnostics.Add(Diagnostic.Create(
+                AmbiguousFallbackMapping,
+                GetDiagnosticLocation(viewModelType),
+                viewModelType.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                string.Join(", ", interfaceCandidates.Select(static type =>
+                    type.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)))));
+            return null;
+        }
+
+        var selectedView = mode switch
+        {
+            AdapterResolutionMode.ExactThenBaseTypes => selectedBaseView,
+            AdapterResolutionMode.ExactThenInterfaces => distinctInterfaceViews.SingleOrDefault(),
+            AdapterResolutionMode.ExactThenBaseTypesThenInterfaces =>
+                selectedBaseView ?? distinctInterfaceViews.SingleOrDefault(),
+            AdapterResolutionMode.ExactThenInterfacesThenBaseTypes =>
+                distinctInterfaceViews.SingleOrDefault() ?? selectedBaseView,
+            _ => null,
+        };
+
+        return selectedView is not null && SymbolEqualityComparer.Default.Equals(selectedView, targetView);
+    }
+
+    private static void AppendGeneratedViewResolver(
+        StringBuilder source,
+        INamedTypeSymbol locatorSymbol,
+        IReadOnlyList<ResolvedViewMapping> resolvedMappings)
+    {
+        var mode = GetGeneratedAdapterResolutionMode(locatorSymbol);
+        var baseMappings = resolvedMappings
+            .Where(static mapping =>
+                mapping.ViewModelType.TypeKind == TypeKind.Class &&
+                !mapping.ViewModelType.IsSealed &&
+                !mapping.ViewModelType.IsGenericType)
+            .GroupBy(static mapping => mapping.ViewModelType, SymbolEqualityComparer.Default)
+            .Select(static group => group.First())
+            .OrderByDescending(static mapping => GetInheritanceDepth(mapping.ViewModelType))
+            .ThenBy(static mapping => mapping.ViewModelType.ToDisplayString(), StringComparer.Ordinal)
+            .ToArray();
+        var interfaceMappings = resolvedMappings
+            .Where(static mapping =>
+                mapping.ViewModelType.TypeKind == TypeKind.Interface &&
+                !mapping.ViewModelType.IsGenericType)
+            .GroupBy(static mapping => mapping.ViewModelType, SymbolEqualityComparer.Default)
+            .Select(static group => group.First())
+            .OrderByDescending(static mapping => GetInterfaceDepth(mapping.ViewModelType))
+            .ThenBy(static mapping => mapping.ViewModelType.ToDisplayString(), StringComparer.Ordinal)
+            .ToArray();
+
+        source.Append(
+            """
+
+	private static bool TryGetResolvedViewFactory(object? instance, out Func<Control>? factory)
+	{
+		if (instance is null)
+		{
+			factory = null;
+			return false;
+		}
+
+		if (s_views.TryGetValue(instance.GetType(), out factory))
+		{
+			return true;
+		}
+""");
+
+        void AppendMappings(IEnumerable<ResolvedViewMapping> mappings)
+        {
+            foreach (var mapping in mappings)
+            {
+                var viewModelType = GetSourceTypeReference(mapping.ViewModelType);
+                source.AppendLine();
+                source.AppendLine($"\t\tif (instance is {viewModelType} && s_views.TryGetValue(typeof({viewModelType}), out factory))");
+                source.AppendLine("\t\t{");
+                source.AppendLine("\t\t\treturn true;");
+                source.AppendLine("\t\t}");
+            }
+        }
+
+        switch (mode)
+        {
+            case AdapterResolutionMode.ExactThenBaseTypes:
+                AppendMappings(baseMappings);
+                break;
+            case AdapterResolutionMode.ExactThenInterfaces:
+                AppendMappings(interfaceMappings);
+                break;
+            case AdapterResolutionMode.ExactThenBaseTypesThenInterfaces:
+                AppendMappings(baseMappings);
+                AppendMappings(interfaceMappings);
+                break;
+            case AdapterResolutionMode.ExactThenInterfacesThenBaseTypes:
+                AppendMappings(interfaceMappings);
+                AppendMappings(baseMappings);
+                break;
+        }
+
+        source.Append(
+            """
+
+		factory = null;
+		return false;
+	}
+
+	private static bool TryCreateResolvedView(object? instance, out Control? view)
+	{
+		if (TryGetResolvedViewFactory(instance, out var factory) && factory is not null)
+		{
+			view = factory();
+			return true;
+		}
+
+		view = null;
+		return false;
+	}
+""");
+        source.AppendLine();
+    }
+
+    private static int GetInheritanceDepth(INamedTypeSymbol type)
+    {
+        var result = 0;
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            result++;
+        }
+
+        return result;
+    }
+
+    private static int GetInterfaceDepth(INamedTypeSymbol type)
+    {
+        return type.AllInterfaces.Length;
+    }
+
     private static void AppendIViewLocator(
         StringBuilder source,
         INamedTypeSymbol locatorSymbol,
@@ -666,7 +1121,7 @@ public sealed partial class StaticViewLocatorGenerator
 
     public global::ReactiveUI.IViewFor? ResolveView(object? instance, string? contract)
     {
-        if (instance is null || contract is not null || !TryCreateViewExact(instance.GetType(), out var control))
+        if (instance is null || contract is not null || !TryCreateResolvedView(instance, out var control))
         {
             return null;
         }
@@ -689,6 +1144,7 @@ public sealed partial class StaticViewLocatorGenerator
         Compilation compilation,
         INamedTypeSymbol locatorSymbol,
         bool generateIViewLocator,
+        bool missingViewHookExists,
         ICollection<Diagnostic> diagnostics)
     {
         var hookModifier = GetHookModifier(locatorSymbol);
@@ -735,7 +1191,7 @@ public sealed partial class StaticViewLocatorGenerator
 
     {{hookModifier}} Control? BuildResolvedView(object? param)
     {
-        if (param is null || !TryCreateViewExact(param.GetType(), out var control))
+        if (param is null || !TryCreateResolvedView(param, out var control))
         {
             return null;
         }
@@ -761,7 +1217,7 @@ public sealed partial class StaticViewLocatorGenerator
 
     {{hookModifier}} Control? BuildResolvedView(object? param)
     {
-        if (param is null || !TryCreateViewExact(param.GetType(), out var control))
+        if (param is null || !TryCreateResolvedView(param, out var control))
         {
             return null;
         }
@@ -816,14 +1272,7 @@ public sealed partial class StaticViewLocatorGenerator
             source.AppendLine();
         }
 
-        if (!HasControlHook(
-                compilation,
-                locatorSymbol,
-                diagnostics,
-                "BuildMissingView",
-                "BuildMissingView(object?, Type)",
-                "System.Object",
-                "System.Type"))
+        if (!missingViewHookExists)
         {
             source.Append(
                 $$"""
@@ -874,13 +1323,7 @@ public sealed partial class StaticViewLocatorGenerator
 
     {{hookModifier}} bool MatchDataTemplate(object? data)
     {
-        if (data is null)
-        {
-            return false;
-        }
-
-        var type = data.GetType();
-        return s_views.ContainsKey(type) || s_missingViews.ContainsKey(type);
+        return TryGetResolvedViewFactory(data, out _);
     }
 """);
             source.AppendLine();
@@ -892,12 +1335,11 @@ public sealed partial class StaticViewLocatorGenerator
 
     {{hookModifier}} bool MatchDataTemplate(object? data)
     {
-        if (data is null)
+        if (!TryGetResolvedViewFactory(data, out _))
         {
             return false;
         }
 
-        var type = data.GetType();
         return
 """);
         source.AppendLine();
@@ -905,9 +1347,8 @@ public sealed partial class StaticViewLocatorGenerator
         for (var index = 0; index < matchTypes.Length; index++)
         {
             var typeName = matchTypes[index].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            source.Append("            typeof(");
+            source.Append("            data is ");
             source.Append(typeName);
-            source.Append(").IsAssignableFrom(type)");
             source.AppendLine(index == matchTypes.Length - 1 ? ";" : " ||");
         }
 
