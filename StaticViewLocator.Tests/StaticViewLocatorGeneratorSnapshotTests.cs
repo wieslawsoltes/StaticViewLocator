@@ -140,7 +140,7 @@ namespace TestApp
         var diagnostic = Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0004");
         var locatorSource = result.RunResult.GeneratedTrees
             .Single(static tree => tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal))
-            .GetText()
+            .GetText(TestContext.Current.CancellationToken)
             .ToString();
 
         Assert.Contains("DashboardView", diagnostic.GetMessage(), StringComparison.Ordinal);
@@ -354,7 +354,7 @@ namespace TestApp
         var diagnostic = Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0003");
         var locatorSource = result.RunResult.GeneratedTrees
             .Single(static tree => tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal))
-            .GetText()
+            .GetText(TestContext.Current.CancellationToken)
             .ToString();
 
         Assert.Contains("DashboardViewModel", diagnostic.GetMessage(), StringComparison.Ordinal);

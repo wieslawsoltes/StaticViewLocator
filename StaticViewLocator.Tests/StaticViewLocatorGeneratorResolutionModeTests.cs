@@ -224,7 +224,7 @@ namespace TestApp
 
         Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0008");
         var locatorSource = result.RunResult.GeneratedTrees.Single(tree =>
-            tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal)).GetText().ToString();
+            tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal)).GetText(TestContext.Current.CancellationToken).ToString();
         Assert.DoesNotContain(
             "[typeof(TestApp.ViewModels.RootViewModel)] = () =>",
             locatorSource,
@@ -261,7 +261,7 @@ namespace TestApp
 
         Assert.Single(result.GeneratorDiagnostics, static item => item.Id == "SVL0008");
         var locatorSource = result.RunResult.GeneratedTrees.Single(tree =>
-            tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal)).GetText().ToString();
+            tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal)).GetText(TestContext.Current.CancellationToken).ToString();
         Assert.DoesNotContain(
             "[typeof(TestApp.ViewModels.RootViewModel)] = () =>",
             locatorSource,
@@ -428,7 +428,7 @@ public partial class ViewLocator
         Assert.Empty(result.GeneratorDiagnostics.Where(static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error));
 
         var locatorSource = result.RunResult.GeneratedTrees.Single(tree =>
-            tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal)).GetText().ToString();
+            tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal)).GetText(TestContext.Current.CancellationToken).ToString();
         var adapterPath = GetGeneratedAdapterPath(locatorSource);
         Assert.DoesNotContain(".BaseType", adapterPath, StringComparison.Ordinal);
         Assert.DoesNotContain("GetInterfaces", adapterPath, StringComparison.Ordinal);

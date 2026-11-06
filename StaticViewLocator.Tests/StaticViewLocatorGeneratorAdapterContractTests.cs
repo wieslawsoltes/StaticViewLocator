@@ -25,7 +25,7 @@ public partial class ViewLocator { }
 
         var generatedSource = result.RunResult.GeneratedTrees
             .Single(tree => tree.FilePath.EndsWith("ViewLocator_StaticViewLocator.cs", StringComparison.Ordinal))
-            .GetText()
+            .GetText(TestContext.Current.CancellationToken)
             .ToString();
         Assert.DoesNotContain("global::ReactiveUI", generatedSource, StringComparison.Ordinal);
     }
